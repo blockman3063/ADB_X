@@ -26,7 +26,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
   release:
-    name: Release + Sync to Xposed repo
+    name: Release + Full mirror to Xposed repo
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -37,7 +37,6 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
 
-      # Build signed APK (use secrets if available, otherwise generate CI key)
       - name: Setup keystore
         run: |
           if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
@@ -48,9 +47,7 @@ jobs:
             keyAlias=${{ secrets.KEYALIAS }}
             storeFile=adb_x.jks
             EOF
-            echo "Using configured keystore"
           else
-            # Generate temporary keystore for CI
             keytool -genkey -v -keystore adb_x.jks -alias adb_x -keyalg RSA \
               -keysize 2048 -validity 1 -storepass temp_pass -keypass temp_pass \
               -dname "CN=CI, OU=ADB_X, O=ADB_X, L=Unknown, ST=Unknown, C=CN"
@@ -60,13 +57,11 @@ jobs:
             keyAlias=adb_x
             storeFile=adb_x.jks
             EOF
-            echo "Using temporary CI keystore"
           fi
 
       - name: Build release APK
         run: ./gradlew assembleRelease
 
-      # Extract version info from APK
       - name: Extract version info
         id: apk
         run: |
@@ -77,45 +72,43 @@ jobs:
           echo "versionCode=$VERCODE" >> "$GITHUB_OUTPUT"
           echo "versionName=$VERNAME" >> "$GITHUB_OUTPUT"
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ADB_X v${{ steps.apk.outputs.versionName }}
           body: |
             ## ADB_X v${{ steps.apk.outputs.versionName }}
-
             Xposed module — wireless ADB enhancement.
-
-            ### Features
-            - Fixed ADB port
-            - Pairing code capture & display
-            - Trusted WiFi auto-enable (system_server hook)
-            - Connection watchdog
-            - Material 3 UI
           files: app/build/outputs/apk/release/app-release.apk
           draft: false
           prerelease: false
 
-      # ---- Sync to Xposed Module Repository ----
-      - name: Checkout Xposed repo
-        uses: actions/checkout@v4
-        with:
-          repository: Xposed-Modules-Repo/top.cbug.adbx
-          token: ${{ secrets.XPOSED_TOKEN }}
-          path: xposed_repo
-
-      - name: Sync APK + metadata to Xposed repo
+      # ---- Full source mirror to Xposed-Modules-Repo ----
+      - name: Mirror full source to Xposed repo
+        env:
+          VC: ${{ steps.apk.outputs.versionCode }}
+          VN: ${{ steps.apk.outputs.versionName }}
         run: |
-          VC=${{ steps.apk.outputs.versionCode }}
-          VN=${{ steps.apk.outputs.versionName }}
+          # Clone Xposed repo
+          git clone --branch main \
+            https://x-access-token:${{ secrets.XPOSED_TOKEN }}@github.com/Xposed-Modules-Repo/top.cbug.adbx.git \
+            xposed_mirror
 
-          # APK in version-code directory
-          mkdir -p xposed_repo/$VC
-          cp app/build/outputs/apk/release/app-release.apk \
-             xposed_repo/$VC/top.cbug.adbx_$VC.apk
+          cd xposed_mirror
+          # Remove old content (keep .git)
+          find . -mindepth 1 -not -path './.git/*' -delete
 
-          # module.prop (update version info)
-          cat > xposed_repo/module.prop << PROPEOF
+          cd ..
+          # Copy all source from main repo (except build artifacts and secrets)
+          rsync -a --exclude='.git' --exclude='app/build' --exclude='.gradle' \
+            --exclude='.xposed_repo' --exclude='adb_x.jks' --exclude='adb_x.b64.txt' \
+            --exclude='keystore.properties' --exclude='local.properties' \
+            --exclude='*.db' --exclude='*.bak' --exclude='build_log.txt' \
+            --exclude='*.jar' ./ ./xposed_mirror/
+
+          cd xposed_mirror
+          # Add module.prop
+          cat > module.prop << PROPEOF
           #
           # ADB_X - Xposed module for wireless ADB enhancement
           # https://github.com/blockman3063/ADB_X
@@ -130,13 +123,18 @@ jobs:
           maxSdk=36
           PROPEOF
 
-          # changelog (append)
-          echo "- Release v$VN" >> xposed_repo/changelog.txt
+          # APK in version-code directory
+          mkdir -p $VC
+          cp ../app/build/outputs/apk/release/app-release.apk $VC/top.cbug.adbx_$VC.apk
 
-          # Commit & push
-          cd xposed_repo
+          # Changelog
+          echo "- Release v$VN" >> changelog.txt
+
+      - name: Push mirror to Xposed repo
+        run: |
+          cd xposed_mirror
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || git commit -m "Sync v$VN from blockman3063/ADB_X"
-          git push
+          git commit --allow-empty -m "Sync v${{ steps.apk.outputs.versionName }} from blockman3063/ADB_X"
+          git push origin main
