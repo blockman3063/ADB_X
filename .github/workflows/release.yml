@@ -12,6 +12,8 @@ jobs:
     name: Debug build
     runs-on: ubuntu-latest
     if: "!startsWith(github.ref, 'refs/tags/v')"
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -29,6 +31,8 @@ jobs:
     name: Release + Full mirror to Xposed repo
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
