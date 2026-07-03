@@ -59,7 +59,7 @@ jobs:
       - name: Extract version info
         id: apk
         run: |
-          AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/**/aapt2 | tail -1)
+          AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/**/aapt2 2>/dev/null | tail -1 || echo /usr/local/lib/android/sdk/build-tools/36.0.0/aapt2)
           BADGING=$($AAPT dump badging app/build/outputs/apk/release/app-release.apk | head -1)
           VERCODE=$(echo "$BADGING" | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
           VERNAME=$(echo "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")
@@ -82,10 +82,11 @@ jobs:
         env:
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
+          XPOSED_TOKEN: ${{ secrets.XPOSED_TOKEN }}
         run: |
           # Clone Xposed repo
           git clone --branch main \
-            https://x-access-token:${{ secrets.XPOSED_TOKEN }}@github.com/Xposed-Modules-Repo/top.cbug.adbx.git \
+            https://x-access-token:${XPOSED_TOKEN}@github.com/Xposed-Modules-Repo/top.cbug.adbx.git \
             xposed_mirror
 
           cd xposed_mirror
@@ -123,6 +124,7 @@ jobs:
         env:
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
+          XPOSED_TOKEN: ${{ secrets.XPOSED_TOKEN }}
         run: |
           cd xposed_mirror
           git config user.name "github-actions[bot]"
