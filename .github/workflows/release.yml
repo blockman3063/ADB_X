@@ -83,7 +83,7 @@ jobs:
 
       # ---- Full source mirror to Xposed-Modules-Repo (requires XPOSED_TOKEN secret) ----
       - name: Mirror full source to Xposed repo
-        if: secrets.XPOSED_TOKEN != ''
+        if: ${{ secrets.XPOSED_TOKEN != '' }}
         env:
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
@@ -127,7 +127,7 @@ jobs:
           echo "- Release v$VN" >> changelog.txt
 
       - name: Push mirror + tag to Xposed repo
-        if: secrets.XPOSED_TOKEN != ''
+        if: ${{ secrets.XPOSED_TOKEN != '' }}
         env:
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
