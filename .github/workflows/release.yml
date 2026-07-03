@@ -41,22 +41,15 @@ jobs:
         run: |
           if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > adb_x.jks
-            cat > keystore.properties <<EOF
-            storePassword=${{ secrets.STOREPASSWORD }}
-            keyPassword=${{ secrets.KEYPASSWORD }}
-            keyAlias=${{ secrets.KEYALIAS }}
-            storeFile=adb_x.jks
-            EOF
+            printf "storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=adb_x.jks\n" \
+              "${{ secrets.STOREPASSWORD }}" \
+              "${{ secrets.KEYPASSWORD }}" \
+              "${{ secrets.KEYALIAS }}" > keystore.properties
           else
             keytool -genkey -v -keystore adb_x.jks -alias adb_x -keyalg RSA \
               -keysize 2048 -validity 1 -storepass temp_pass -keypass temp_pass \
               -dname "CN=CI, OU=ADB_X, O=ADB_X, L=Unknown, ST=Unknown, C=CN"
-            cat > keystore.properties <<EOF
-            storePassword=temp_pass
-            keyPassword=temp_pass
-            keyAlias=adb_x
-            storeFile=adb_x.jks
-            EOF
+            printf "storePassword=temp_pass\nkeyPassword=temp_pass\nkeyAlias=adb_x\nstoreFile=adb_x.jks\n" > keystore.properties
           fi
 
       - name: Build release APK
