@@ -134,24 +134,40 @@ jobs:
           VN: ${{ steps.apk.outputs.versionName }}
         run: |
           cp xposed_mirror/$VC/top.cbug.adbx_$VC.apk ./adb_x_v$VN.apk
-          TAG_NAME="v$VN"
-          curl -s -X POST \
+          # Use a unique tag to avoid conflicts with immutable existing releases.
+          # Format: <version>-<run_id>
+          TAG_NAME="$VN-${{ github.run_id }}"
+
+          # Create as DRAFT first so we can upload asset before lock
+          DRAFT_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/Xposed-Modules-Repo/top.cbug.adbx/releases" \
-            -d "{\"tag_name\":\"$TAG_NAME\",\"name\":\"ADB_X $TAG_NAME\",\"body\":\"ADB_X v$VN - wireless ADB enhancement Xposed module.\n\nSource: https://github.com/blockman3063/ADB_X\",\"draft\":false,\"prerelease\":false}"
-          RELEASE_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/Xposed-Modules-Repo/top.cbug.adbx/releases/tags/$TAG_NAME" \
-            | grep -m1 '"id":' | head -1 | sed 's/[^0-9]//g')
-          if [ -n "$RELEASE_ID" ]; then
-            curl -s -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/vnd.android.package-archive" \
-              "https://uploads.github.com/repos/Xposed-Modules-Repo/top.cbug.adbx/releases/$RELEASE_ID/assets?name=adb_x_v$VN.apk" \
-              --data-binary @./adb_x_v$VN.apk
-            echo "APK uploaded to Xposed repo release v$VN"
-          else
-            echo "ERROR: could not get release ID"
+            -d "{\"tag_name\":\"$TAG_NAME\",\"name\":\"ADB_X $TAG_NAME\",\"body\":\"ADB_X v$VN - wireless ADB enhancement Xposed module.\n\nSource: https://github.com/blockman3063/ADB_X\",\"draft\":true,\"prerelease\":false}")
+          RELEASE_ID=$(echo "$DRAFT_RESPONSE" | grep -m1 '"id":' | head -1 | sed 's/[^0-9]//g')
+
+          if [ -z "$RELEASE_ID" ]; then
+            echo "ERROR: failed to create draft release"
+            echo "$DRAFT_RESPONSE"
             exit 1
           fi
+
+          echo "Draft release $TAG_NAME created with id $RELEASE_ID"
+
+          # Upload asset (draft releases are not immutable)
+          UPLOAD_RESULT=$(curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            "https://uploads.github.com/repos/Xposed-Modules-Repo/top.cbug.adbx/releases/$RELEASE_ID/assets?name=adb_x_v$VN.apk" \
+            --data-binary @./adb_x_v$VN.apk)
+          echo "Upload: $UPLOAD_RESULT"
+
+          # Now publish the draft
+          curl -s -X PATCH \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/Xposed-Modules-Repo/top.cbug.adbx/releases/$RELEASE_ID" \
+            -d '{"draft":false}'
+
+          echo "✅ Published release $TAG_NAME with APK adb_x_v$VN.apk"
 
