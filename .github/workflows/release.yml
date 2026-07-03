@@ -81,8 +81,9 @@ jobs:
           draft: false
           prerelease: false
 
-      # ---- Full source mirror to Xposed-Modules-Repo ----
+      # ---- Full source mirror to Xposed-Modules-Repo (requires XPOSED_TOKEN secret) ----
       - name: Mirror full source to Xposed repo
+        if: secrets.XPOSED_TOKEN != ''
         env:
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
@@ -94,7 +95,8 @@ jobs:
             xposed_mirror
 
           cd xposed_mirror
-          find . -mindepth 1 -not -path './.git/*' -delete
+          # Remove everything except .git (preserve git history)
+          find . -path ./.git -prune -o -mindepth 1 -delete
           cd ..
 
           # Copy all source from main repo (exclude build artifacts)
@@ -125,6 +127,7 @@ jobs:
           echo "- Release v$VN" >> changelog.txt
 
       - name: Push mirror + tag to Xposed repo
+        if: secrets.XPOSED_TOKEN != ''
         env:
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
