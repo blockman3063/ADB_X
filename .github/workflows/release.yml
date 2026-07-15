@@ -134,25 +134,69 @@ jobs:
           git commit --allow-empty -m "Sync v${{ steps.apk.outputs.versionName }} from blockman3063/ADB_X"
           git push origin main
 
+      - name: Build changelog since last release
+        id: changelog
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          # Find the previous v* tag (the most recent one before the one that
+          # just triggered this workflow). List commits between it and HEAD,
+          # formatted as a markdown bullet list for the release notes body.
+          PREV_TAG=$(git tag --sort=-creatordate \
+            | grep -E '^v[0-9]' \
+            | grep -v "^${CURRENT_TAG}$" \
+            | head -1 || true)
+          if [ -z "$PREV_TAG" ]; then
+            # First release — list the last 20 commits on main instead.
+            NOTES=$(git log --oneline -20 | sed 's/^/- /')
+            echo "First release — showing last 20 commits" >> "$GITHUB_STEP_SUMMARY"
+          else
+            NOTES=$(git log "${PREV_TAG}..HEAD" --oneline | sed 's/^/- /')
+            echo "Commits since ${PREV_TAG}:" >> "$GITHUB_STEP_SUMMARY"
+            git log "${PREV_TAG}..HEAD" --oneline >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release on Xposed repo
         env:
           GH_TOKEN: ${{ secrets.XPOSED_TOKEN }}
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
+          NOTES: ${{ steps.changelog.outputs.notes }}
         run: |
-          cp xposed_mirror/$VC/top.cbug.adbx_$VC.apk ./adb_x_v$VN.apk
           # Tag must match LSPosed repo indexer regex /^\d+-.+$/ — leading
           # digits, then a dash, then anything. versionCode is a pure int;
           # versionName may contain dots. This avoids the immutable-release
           # tag-reuse block and keeps modules.lsposed.org indexing the build.
           TAG_NAME="$VC-$VN"
 
+          # Build the release notes body, then POST as JSON via a heredoc
+          # so we don't fight with bash/awk string escaping for embedded
+          # newlines, quotes, or backslashes that may appear in commit
+          # messages.
+          PAYLOAD=$(python3 <<PYEOF
+          import json, sys
+          notes = sys.stdin.read()
+          body = "ADB_X v$VN - wireless ADB enhancement Xposed module.\n\n## Changes since previous release\n\n" + notes + "\n\nSource: https://github.com/blockman3063/ADB_X"
+          payload = {
+              "tag_name":   "$TAG_NAME",
+              "name":       "ADB_X $TAG_NAME",
+              "body":       body,
+              "draft":      True,
+              "prerelease": False,
+          }
+          sys.stdout.write(json.dumps(payload))
+          PYEOF
+          <<<"$NOTES")
+
           # Create as DRAFT first so we can upload asset before lock
           DRAFT_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/Xposed-Modules-Repo/top.cbug.adbx/releases" \
-            -d "{\"tag_name\":\"$TAG_NAME\",\"name\":\"ADB_X $TAG_NAME\",\"body\":\"ADB_X v$VN - wireless ADB enhancement Xposed module.\n\nSource: https://github.com/blockman3063/ADB_X\",\"draft\":true,\"prerelease\":false}")
+            -d "$PAYLOAD")
           RELEASE_ID=$(echo "$DRAFT_RESPONSE" | grep -m1 '"id":' | head -1 | sed 's/[^0-9]//g')
 
           if [ -z "$RELEASE_ID" ]; then
@@ -163,7 +207,11 @@ jobs:
 
           echo "Draft release $TAG_NAME created with id $RELEASE_ID"
 
-          # Upload asset (draft releases are not immutable)
+          # Upload asset (draft releases are not immutable).
+          # The APK already lives in xposed_mirror as $VC/top.cbug.adbx_$VC.apk,
+          # but we copy it to a flat name for the release asset so the URL
+          # is stable across builds with the same versionName.
+          cp "xposed_mirror/$VC/top.cbug.adbx_$VC.apk" "./adb_x_v$VN.apk"
           UPLOAD_RESULT=$(curl -s -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Content-Type: application/vnd.android.package-archive" \
