@@ -160,16 +160,17 @@ jobs:
             echo "Commits since ${PREV_TAG}:" >> "$GITHUB_STEP_SUMMARY"
             git log "${PREV_TAG}..HEAD" --oneline >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$NOTES" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          # Persist NOTES to a file. Step outputs/env can't carry multi-line
+          # values in classic Actions, so we write to disk and the next step
+          # reads it back via a relative path.
+          printf '%s' "$NOTES" > changelog.txt
+          echo "wrote $(wc -l < changelog.txt) lines to changelog.txt" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create GitHub Release on Xposed repo
         env:
           GH_TOKEN: ${{ secrets.XPOSED_TOKEN }}
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
-          NOTES: ${{ steps.changelog.outputs.notes }}
         run: |
           # Tag must match LSPosed repo indexer regex /^\d+-.+$/ — leading
           # digits, then a dash, then anything. versionCode is a pure int;
@@ -177,13 +178,13 @@ jobs:
           # tag-reuse block and keeps modules.lsposed.org indexing the build.
           TAG_NAME="$VC-$VN"
 
-          # Build the release notes body, then POST as JSON via a heredoc
-          # so we don't fight with bash/awk string escaping for embedded
-          # newlines, quotes, or backslashes that may appear in commit
-          # messages.
+          # Build the release notes body, then POST as JSON via a python
+          # heredoc so we don't fight with bash/awk string escaping for
+          # embedded newlines, quotes, or backslashes in commit messages.
           PAYLOAD=$(python3 <<PYEOF
-          import json, sys
-          notes = sys.stdin.read()
+          import json
+          with open('changelog.txt') as f:
+              notes = f.read()
           body = "ADB_X v$VN - wireless ADB enhancement Xposed module.\n\n## Changes since previous release\n\n" + notes + "\n\nSource: https://github.com/blockman3063/ADB_X"
           payload = {
               "tag_name":   "$TAG_NAME",
@@ -192,9 +193,9 @@ jobs:
               "draft":      True,
               "prerelease": False,
           }
+          import sys
           sys.stdout.write(json.dumps(payload))
-          PYEOF
-          <<<"$NOTES")
+          PYEOF)
 
           # Create as DRAFT first so we can upload asset before lock
           DRAFT_RESPONSE=$(curl -s -X POST \
