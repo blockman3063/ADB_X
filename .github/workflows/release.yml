@@ -126,8 +126,6 @@ jobs:
           minSdk=30
           maxSdk=36
           PROPEOF
-          mkdir -p $VC
-          cp ../app/build/outputs/apk/release/app-release.apk $VC/top.cbug.adbx_$VC.apk
           echo "- Release v$VN" >> changelog.txt
 
       - name: Push mirror to Xposed repo
@@ -214,10 +212,10 @@ jobs:
           echo "Draft release $TAG_NAME created with id $RELEASE_ID"
 
           # Upload asset (draft releases are not immutable).
-          # The APK already lives in xposed_mirror as $VC/top.cbug.adbx_$VC.apk,
-          # but we copy it to a flat name for the release asset so the URL
-          # is stable across builds with the same versionName.
-          cp "xposed_mirror/$VC/top.cbug.adbx_$VC.apk" "./adb_x_v$VN.apk"
+          # The release APK was built earlier in app/build/outputs/apk/release/
+          # by the 'Build release APK' step. We upload it with a flat name
+          # so the URL is stable across builds with the same versionName.
+          cp "app/build/outputs/apk/release/app-release.apk" "./adb_x_v$VN.apk"
           UPLOAD_RESULT=$(curl -s -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Content-Type: application/vnd.android.package-archive" \
