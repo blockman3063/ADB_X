@@ -11,12 +11,16 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
+import android.view.View
 import android.util.Log
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.commit
@@ -99,7 +103,21 @@ class MainActivity : AppCompatActivity() {
         try {
             setContentView(R.layout.activity_main)
             AppSettings.load(this)
+            val navHost = findViewById<View>(R.id.nav_host)
             bottomNav = findViewById(R.id.bottom_nav)
+
+            // Push only the status-bar inset into the fragment container so
+            // the top of the content clears the status bar. The
+            // BottomNavigationView applies its own bottom inset for the
+            // navigation bar, so we don't add bottom padding here.
+            ViewCompat.setOnApplyWindowInsetsListener(navHost) { v, insets ->
+                val sysBars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars()
+                    or WindowInsetsCompat.Type.displayCutout()
+                )
+                v.updatePadding(top = sysBars.top)
+                insets
+            }
             bottomNav.setOnItemSelectedListener { item ->
                 switchTo(when (item.itemId) {
                     R.id.tab_status   -> StatusFragment()
