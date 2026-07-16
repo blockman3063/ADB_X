@@ -79,6 +79,34 @@ object AdbSystemHooks {
             })
 
             XposedInit.log("[$TAG] WiFi callback registered — all ADB logic in system_server")
+
+            // Dump saved WiFi networks to a world-readable file so the app
+            // can read them. Android 11+ privacy hides the full list from
+            // third-party apps via WifiManager.configuredNetworks, but
+            // system_server has full visibility. We piggyback on the
+            // existing WifiManager injection point.
+            try {
+                val wifiClass = XposedHelpers.findClass("android.net.wifi.WifiManager", null)
+                val getNetworksMethod = wifiClass.getDeclaredMethod("getConfiguredNetworks")
+                val wmInstance = context.getSystemService(Context.WIFI_SERVICE)
+                val networks = getNetworksMethod.invoke(wmInstance) as? List<*> ?: emptyList<Any>()
+                val sb = StringBuilder()
+                for (net in networks) {
+                    if (net == null) continue
+                    val cls = net.javaClass
+                    val ssid = try { (XposedHelpers.callMethod(net, "getSSID") ?: "").toString() } catch (_: Throwable) { "" }
+                    val bssid = try { (XposedHelpers.callMethod(net, "getBSSID") ?: "").toString() } catch (_: Throwable) { "" }
+                    sb.append(ssid.replace("\"", "")).append('|')
+                      .append(bssid.replace("\"", "")).append('|')
+                      .append("Secured").append('\n')
+                }
+                val tmp = java.io.File("/data/local/tmp/adb_x_wifi_list")
+                tmp.writeText(sb.toString())
+                java.io.File("/data/local/tmp/adb_x_wifi_list").setReadable(true, false)
+                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks")
+            } catch (t: Throwable) {
+                XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
+            }
         } catch (t: Throwable) {
             XposedInit.log("[$TAG] Init failed: ${t.message}")
             registered.set(false)

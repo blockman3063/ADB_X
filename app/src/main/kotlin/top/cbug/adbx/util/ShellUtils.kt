@@ -26,16 +26,31 @@ object ShellUtils {
         if (rootChecked && (now - lastRootCheckMs) < ROOT_CACHE_TTL_MS) {
             return rootAvailable
         }
+        // Some ROMs (Magisk with DenyList, hardened SELinux) hide su
+        // binaries from third-party apps via File.exists(). Try executing
+        // su directly instead — if it returns 0 with output we have root.
         for (suPath in SU_PATHS) {
             try {
-                if (File(suPath[0]).exists()) {
+                val proc = ProcessBuilder(suPath + "echo ADB_X_ROOT_OK")
+                    .redirectErrorStream(true)
+                    .start()
+                val finished = proc.waitFor(PROBE_TIMEOUT_MS * 30, TimeUnit.MILLISECONDS)
+                if (!finished) {
+                    proc.destroyForcibly()
+                    continue
+                }
+                val out = proc.inputStream.bufferedReader().readText().trim()
+                if (proc.exitValue() == 0 && out.contains("ADB_X_ROOT_OK")) {
                     workingSuPath = suPath
                     rootChecked = true
                     rootAvailable = true
                     lastRootCheckMs = now
+                    android.util.Log.d(TAG, "probeRootFast: " + suPath[0] + " works")
                     return true
                 }
-            } catch (_: Exception) { }
+            } catch (t: Exception) {
+                android.util.Log.d(TAG, "probeRootFast: " + suPath[0] + " error: " + t.message)
+            }
         }
         // Fallback: which su
         return runCatching {
@@ -71,11 +86,14 @@ object ShellUtils {
             val finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
             if (!finished) {
                 proc.destroyForcibly()
+                android.util.Log.d(TAG, "execute timeout: " + command.take(60))
                 return Result(-2, "timeout")
             }
             val out = proc.inputStream.bufferedReader().readText()
+            android.util.Log.d(TAG, "execute cmd='" + command.take(60) + "' rc=" + proc.exitValue() + " outLen=" + out.length)
             Result(proc.exitValue(), out)
         } catch (e: Exception) {
+            android.util.Log.d(TAG, "execute error: " + command.take(60) + " msg=" + e.message)
             Result(-1, e.message ?: "")
         }
     }

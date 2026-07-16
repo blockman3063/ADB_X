@@ -22,6 +22,7 @@ object WifiHelper {
      * @param Context
      */
     fun getSavedNetworks(context: Context): List<SavedWifi> {
+        Log.d(TAG, "getSavedNetworks: rootAvailable=" + ShellUtils.hasRoot() + " contextNull=" + (context == null))
         // 1. Direct XML parsing (most reliable with root)
         if (ShellUtils.hasRoot()) {
             val rootXml = try { getSavedNetworksRootXml() } catch (_: Exception) { emptyList() }
@@ -29,7 +30,9 @@ object WifiHelper {
                 Log.d(TAG, "Loaded " + rootXml.size + " networks via XML")
                 return rootXml
             }
+            Log.d(TAG, "XML path returned empty")
         }
+        Log.d(TAG, "falling through to next method...")
 
         // 2. cmd wifi via su (captures both stdout and stderr)
         val cmdNetworks = try { getSavedNetworksCmd() } catch (_: Exception) { emptyList() }
@@ -37,6 +40,7 @@ object WifiHelper {
             Log.d(TAG, "Loaded " + cmdNetworks.size + " networks via cmd wifi")
             return cmdNetworks
         }
+        Log.d(TAG, "cmd wifi path returned empty")
 
         // 3. dumpsys wifi parsing via root
         if (ShellUtils.hasRoot()) {
@@ -45,6 +49,7 @@ object WifiHelper {
                 Log.d(TAG, "Loaded " + rootDump.size + " networks via dumpsys")
                 return rootDump
             }
+            Log.d(TAG, "dumpsys path returned empty")
         }
 
         // 4. Fallback: use WifiManager API (requires location permission)
@@ -54,7 +59,17 @@ object WifiHelper {
                 Log.d(TAG, "Loaded " + apiNetworks.size + " networks via WifiManager API")
                 return apiNetworks
             }
+            Log.d(TAG, "API path returned empty")
         }
+
+        // 5. LSPosed-written file (system_server can read all WiFi configs
+        // that the app domain cannot). Read /data/local/tmp/adb_x_wifi_list.
+        val hookFile = try { getSavedNetworksFromHookFile() } catch (_: Exception) { emptyList() }
+        if (hookFile.isNotEmpty()) {
+            Log.d(TAG, "Loaded " + hookFile.size + " networks via hook file")
+            return hookFile
+        }
+        Log.d(TAG, "hook file path returned empty")
 
         Log.w(TAG, buildString {
             appendLine("Cannot read saved networks - all methods failed")
@@ -280,18 +295,39 @@ object WifiHelper {
             Log.w(TAG, "getConfiguredNetworks failed: " + e.message)
             return emptyList()
         }
+        Log.d(TAG, "getConfiguredNetworks: got " + configs.size + " networks")
         if (configs.isEmpty()) return emptyList()
-
-        val seen = mutableSetOf<String>()
-        return configs.mapNotNull { config ->
+        val result = configs.mapNotNull { config ->
             val ssid = cleanSsid(config.SSID)
-            if (ssid.isBlank() || ssid in seen) return@mapNotNull null
-            seen.add(ssid)
-            val security = when {
-                config.allowedKeyManagement.get(android.net.wifi.WifiConfiguration.KeyMgmt.NONE) -> "Open"
-                else -> "Secured"
+            if (ssid.isBlank()) return@mapNotNull null
+            SavedWifi(ssid, config.BSSID, parseSecurity(config))
+        }
+        Log.d(TAG, "getSavedNetworksApi returning " + result.size + " networks")
+        return result
+    }
+
+    /** Plain-text fallback used when getConfiguredNetworks returns 0 (Android 11+
+     *  privacy policy hides the full list from third-party apps). The LSPosed
+     *  system_server hook writes the list here on WiFi events. */
+    private fun getSavedNetworksFromHookFile(): List<SavedWifi> {
+        return try {
+            val file = java.io.File("/data/local/tmp/adb_x_wifi_list")
+            if (!file.exists() || !file.canRead()) return emptyList()
+            val lines = file.readLines()
+            lines.mapNotNull { line ->
+                val parts = line.split("|")
+                if (parts.size < 3) return@mapNotNull null
+                val ssid = parts[0].trim()
+                if (ssid.isBlank()) return@mapNotNull null
+                SavedWifi(ssid, parts[1].trim().ifBlank { null }, parts[2].trim())
             }
-            SavedWifi(ssid, config.BSSID, security)
+        } catch (_: Throwable) { emptyList() }
+    }
+
+    private fun parseSecurity(config: WifiConfiguration): String {
+        return when {
+            config.allowedKeyManagement.get(android.net.wifi.WifiConfiguration.KeyMgmt.NONE) -> "Open"
+            else -> "Secured"
         }
     }
 
