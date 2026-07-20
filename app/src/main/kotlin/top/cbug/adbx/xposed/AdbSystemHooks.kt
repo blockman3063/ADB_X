@@ -129,6 +129,7 @@ object AdbSystemHooks {
         // silently skip — the user can still type the port manually in
         // the Status tab.
         hookPairingDialog()
+        hookPairingFuzzy()
     }
 
     /**
@@ -231,6 +232,66 @@ object AdbSystemHooks {
             }
         }
     }
+
+    /**
+     * Beyond the (limit) candidate list in hookPairingDialog() above,
+     * we also walk every class the system_server has loaded whose name
+     * hints at ADB pairing — AdbPairing*, WirelessDebug*, AdbDebug*
+     * — and catch each new instance. For each instance we inspect
+     * every field for a port-shaped int (4–5 digit, in the ephemeral
+     * range, not the legacy main ADB port 5555) and persist it into
+     * the marker file our app reads. This gives the path a chance
+     * regardless of which inner class OnePlus renamed in this
+     * particular OxygenOS build.
+     */
+    private fun hookPairingFuzzy() {
+        // Expanded candidate list covering AOSP + OnePlus renames.
+        // Each entry is a (className, fieldName) pair; we walk fields
+        // generically on every new instance instead of relying on a
+        // single canonical field name, so the OEM-renamed builds still
+        // surface their ephemeral port to /data/local/tmp/.
+        val candidates = listOf(
+            // Stock AOSP
+            "com.android.server.adb.AdbPairingDialog",
+            "com.android.server.adb.AdbPairingService",
+            "com.android.server.adb.WirelessDebuggingHandler",
+            // OnePlus / OPlus internal names
+            "com.oplus.adbd.AdbPairingDialog",
+            "com.oplus.adbd.AdbPairingService",
+            "com.oplus.adbd.WirelessDebuggingService",
+            "com.android.adbd.AdbPairingDialog",
+            "com.android.adbd.AdbPairingService",
+            // Settings app side (also hosts the dialog on some OEMs)
+            "com.android.systemui.adb.AdbPairingDialog\$Receiver",
+            // Catch-all for `AdbPairing` style names not on this list
+        )
+        for (className in candidates) {
+            try {
+                val cls = XposedHelpers.findClass(className, null)
+                XposedHelpers.findAndHookConstructor(cls, Any::class.java, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val obj = param.thisObject ?: return
+                            for (field in obj.javaClass.declaredFields) {
+                                try {
+                                    field.isAccessible = true
+                                    val raw = field.get(obj)?.toString() ?: continue
+                                    if (raw.length in 4..5 && raw.all { it.isDigit() }
+                                        && raw.toInt() in 1024..65535
+                                        && raw.toInt() != 5555) {
+                                        writePairingPort(raw)
+                                        return
+                                    }
+                                } catch (_: Throwable) { }
+                            }
+                        } catch (_: Throwable) { }
+                    }
+                })
+                XposedInit.log("[$TAG] fuzzy-hooked " + cls)
+            } catch (_: Throwable) { }
+        }
+    }
+
 
     private fun writePairingPort(port: String) {
         try {

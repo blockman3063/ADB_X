@@ -14,6 +14,9 @@ import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.chip.Chip
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import top.cbug.adbx.MainActivity
 import top.cbug.adbx.R
@@ -286,7 +289,9 @@ class StatusFragment : Fragment() {
 
         // Pairing shortcut opens the dedicated PairingActivity
         cardPairingShortcut.setOnClickListener { act.openPairingActivity() }
+
         btnStartPairing.setOnClickListener { triggerInAppPairing() }
+
     }
 
     /**
@@ -297,42 +302,46 @@ class StatusFragment : Fragment() {
      * port to /data/local/tmp/adb_x_pairing_port for our reader to pick
      * up. The user does not need to touch Developer options.
      */
+
+    private fun lockPairingButton() {
+        btnStartPairing.isEnabled = false
+        btnStartPairing.text = getString(R.string.section_pairing_code)
+    }
+
+    /**
+     * Path A: write the pair-request marker file for the system_server-
+     * side LSPosed watcher. The watcher (added in AdbSystemHooks.hook) is
+     * the right place for this — it inherits the AdbDebuggingManager
+     * instance reference, reflective access to startAdbPairing(), and
+     * root-level file write to /data/local/tmp/adb_x_pairing_port.
+     *
+     * Path B (last-resort): if the system_server LSPosed hook is not
+     * loaded on this ROM (KernelSU-only installation does not register
+     * top.cbug.adbx as a module, so lspd never injects it), we leave the
+     * request marker set so the next device reboot + LSPosed reload
+     * picks it up.
+     */
     private fun triggerInAppPairing() {
         try {
-            // 1. Mark the request file so the LSPosed watcher (when the
-            //    system_server hook has been reloaded with the new code)
-            //    will pick it up.
-            try {
-                ShellUtils.executeSu("sh -c 'echo 1 > /data/local/tmp/adb_x_request_pair && chmod 666 /data/local/tmp/adb_x_request_pair'", 1000)
-            } catch (_: Throwable) { }
+            // Write 1 byte to the marker file. su is needed because the app
+            // uid cannot touch /data/local/tmp/ directly.
+            runCatching {
+                top.cbug.adbx.util.ShellUtils.executeSu(
+                    "sh -c 'echo 1 > /data/local/tmp/adb_x_request_pair && chmod 666 /data/local/tmp/adb_x_request_pair'",
+                    1000
+                )
+            }
 
-            // 2. (Removed direct IAdbManager service call — it crashed
-            //    OnePlus's AdbDebuggingManager via SIGABRT on unknown
-            //    transaction codes. We rely solely on the LSPosed hook
-            //    in system_server reading the request file.)
-            // 2. As a fallback path for ROMs where the system_server hook
-            //    can not match the AdbDebuggingManager class, kick the
-            //    activity intent that pops the Wi-Fi pair dialog.
-            //    (User-visible only when absolutely necessary.)
-            // 3. Toast the user so they know it's running.
             android.widget.Toast.makeText(
                 requireContext(),
                 R.string.msg_pair_requested,
                 android.widget.Toast.LENGTH_SHORT,
             ).show()
-            // 4. Mark the in-memory adbState as "trying" — easier than
-            //    waiting for the polling loop to update everything.
-            // Mutate the hint string + lock button text. Don't repurpose the button
-            // because the long '已请求配对,等待端口分配…' string would wrap
-            // inside the outlined-button metric and break the layout.
             tvPairingHint.text = getString(R.string.msg_pair_requested)
-            // Schedule an unlock: re-enable the button + clear the hint
-            // once the marker file has either produced a port (success) or
-            // aged past the TTL (5 min). Each renderStatus() tick also
-            // calls unstickPairingButton() when the pairing marker is
-            // gone, so the user is never stuck with a disabled button
-            // forever.
             lockPairingButton()
+            // Safety: if the hook never fires (or already-loaded ROM)
+            // the timer re-enables the button after 30 s so the user is
+            // never stuck on a disabled control.
             view?.postDelayed({ unstickPairingButton() }, 30_000L)
         } catch (t: Throwable) {
             android.util.Log.e("ADB_X_StatusFr", "triggerInAppPairing failed", t)
@@ -342,12 +351,6 @@ class StatusFragment : Fragment() {
                 android.widget.Toast.LENGTH_LONG,
             ).show()
         }
-    }
-
-
-    private fun lockPairingButton() {
-        btnStartPairing.isEnabled = false
-        btnStartPairing.text = getString(R.string.section_pairing_code)
     }
 
     /**
