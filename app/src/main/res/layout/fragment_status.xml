@@ -197,11 +197,13 @@
 
                     <TextView
                         android:id="@+id/tvPairingHint"
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:textAppearance="?attr/textAppearanceBodyMedium"
                         android:textColor="?attr/colorOnSurfaceVariant"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         tools:text="Tap to manage" />
                 </LinearLayout>
 
@@ -278,11 +280,13 @@
 
                 <TextView
                     android:id="@+id/tvPairingBreakdown"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:textAppearance="?attr/textAppearanceBodySmall"
                     android:textColor="?attr/colorOnTertiaryContainer"
+                    android:maxLines="2"
+                    android:ellipsize="end"
                     tools:text="host: 192.168.1.8:37679 · code: 123456" />
 
                 <com.google.android.material.textfield.TextInputLayout

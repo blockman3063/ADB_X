@@ -318,7 +318,12 @@ class StatusFragment : Fragment() {
             // 4. Mark the in-memory adbState as "trying" — easier than
             //    waiting for the polling loop to update everything.
             btnStartPairing.isEnabled = false
-            btnStartPairing.text = getString(R.string.msg_pair_requested)
+            // Mutate the hint string + lock button text. Don't repurpose the button
+            // because the long '已请求配对,等待端口分配…' string would wrap
+            // inside the outlined-button metric and break the layout.
+            tvPairingHint.text = getString(R.string.msg_pair_requested)
+            btnStartPairing.isEnabled = false
+            btnStartPairing.text = getString(R.string.section_pairing_code)
         } catch (t: Throwable) {
             android.util.Log.e("ADB_X_StatusFr", "triggerInAppPairing failed", t)
             android.widget.Toast.makeText(
