@@ -43,6 +43,8 @@
     <string name="pairing_prefix_cmd_fmt">adb pair %1$s:%2$s %3$s</string>
     <string name="pairing_summary_no_code">(using ephemeral 6-digit code)</string>
     <string name="pairing_manual_hint">If the port looks wrong, check Developer options → Wireless debugging for the actual port.</string>
+    <string name="btn_start_pairing">Start pairing</string>
+    <string name="msg_pair_requested">Pairing requested, waiting for port…</string>
     <string name="section_pairing_code">Pairing code</string>
     <string name="section_auto">Automation</string>
     <string name="section_settings">Settings</string>

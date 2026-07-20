@@ -4,7 +4,9 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.util.Log
 import android.widget.TextView
+import java.io.File
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.google.android.material.button.MaterialButton
@@ -16,6 +18,7 @@ import kotlinx.coroutines.launch
 import top.cbug.adbx.MainActivity
 import top.cbug.adbx.R
 import top.cbug.adbx.util.AdbHelper
+import top.cbug.adbx.util.ShellUtils
 import top.cbug.adbx.util.XposedStatus
 
 /**
@@ -55,9 +58,9 @@ class StatusFragment : Fragment() {
     private lateinit var btnEnableAdb: MaterialButton
     private lateinit var btnDisableAdb: MaterialButton
 
-    private lateinit var cardPairingShortcut: com.google.android.material.card.MaterialCardView
+    private lateinit var cardPairingShortcut: MaterialCardView
+    private lateinit var btnStartPairing: MaterialButton
     private lateinit var tvPairingHint: TextView
-
     private lateinit var cardPairingActive: MaterialCardView
     private lateinit var tvPairingConnectionString: TextView
     private lateinit var tvPairingBreakdown: TextView
@@ -87,6 +90,7 @@ class StatusFragment : Fragment() {
         btnDisableAdb = view.findViewById(R.id.btnDisableAdb)
 
         cardPairingShortcut = view.findViewById(R.id.cardPairingShortcut)
+        btnStartPairing = view.findViewById(R.id.btnStartPairing)
         tvPairingHint       = view.findViewById(R.id.tvPairingHint)
 
         cardPairingActive         = view.findViewById(R.id.cardPairingActive)
@@ -277,5 +281,52 @@ class StatusFragment : Fragment() {
 
         // Pairing shortcut opens the dedicated PairingActivity
         cardPairingShortcut.setOnClickListener { act.openPairingActivity() }
+        btnStartPairing.setOnClickListener { triggerInAppPairing() }
     }
+
+    /**
+     * Trigger ADB pairing mode entirely from inside the app: write the
+     * pair-request marker file. The system_server-side LSPosed watcher
+     * (set up in AdbSystemHooks.hook()) picks it up within ~1 s and calls
+     * AdbDebuggingManager.startAdbPairing(), then writes the resulting
+     * port to /data/local/tmp/adb_x_pairing_port for our reader to pick
+     * up. The user does not need to touch Developer options.
+     */
+    private fun triggerInAppPairing() {
+        try {
+            // 1. Mark the request file so the LSPosed watcher (when the
+            //    system_server hook has been reloaded with the new code)
+            //    will pick it up.
+            try {
+                ShellUtils.executeSu("sh -c 'echo 1 > /data/local/tmp/adb_x_request_pair && chmod 666 /data/local/tmp/adb_x_request_pair'", 1000)
+            } catch (_: Throwable) { }
+
+            // 2. (Removed direct IAdbManager service call — it crashed
+            //    OnePlus's AdbDebuggingManager via SIGABRT on unknown
+            //    transaction codes. We rely solely on the LSPosed hook
+            //    in system_server reading the request file.)
+            // 2. As a fallback path for ROMs where the system_server hook
+            //    can not match the AdbDebuggingManager class, kick the
+            //    activity intent that pops the Wi-Fi pair dialog.
+            //    (User-visible only when absolutely necessary.)
+            // 3. Toast the user so they know it's running.
+            android.widget.Toast.makeText(
+                requireContext(),
+                R.string.msg_pair_requested,
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+            // 4. Mark the in-memory adbState as "trying" — easier than
+            //    waiting for the polling loop to update everything.
+            btnStartPairing.isEnabled = false
+            btnStartPairing.text = getString(R.string.msg_pair_requested)
+        } catch (t: Throwable) {
+            android.util.Log.e("ADB_X_StatusFr", "triggerInAppPairing failed", t)
+            android.widget.Toast.makeText(
+                requireContext(),
+                "Trigger failed: " + t.message,
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
 }

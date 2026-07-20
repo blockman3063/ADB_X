@@ -46,6 +46,14 @@
             android:configChanges="orientation|screenSize" />
 
        <receiver
+           android:name=".PairingReceiver"
+           android:exported="false">
+           <intent-filter>
+               <action android:name="android.debug.WIRELESS_DEBUG_ENABLE_DISCOVER_ACTION" />
+           </intent-filter>
+       </receiver>
+
+       <receiver
            android:name=".BootReceiver"
            android:exported="true">
            <intent-filter>

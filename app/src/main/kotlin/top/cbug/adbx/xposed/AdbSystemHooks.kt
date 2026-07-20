@@ -107,6 +107,16 @@ object AdbSystemHooks {
             } catch (t: Throwable) {
                 XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
             }
+
+            // 5. Pair-request watcher: app writes /data/local/tmp/adb_x_request_pair
+            //    when the user taps "Start pairing"; we trigger
+            //    AdbDebuggingManager.startAdbPairing() in system_server and
+            //    capture the resulting port to /data/local/tmp/adb_x_pairing_port.
+            try {
+                startPairRequestWatcher(context, handler)
+            } catch (t: Throwable) {
+                XposedInit.log("[$TAG] pair watcher start failed: ${t.message}")
+            }
         } catch (t: Throwable) {
             XposedInit.log("[$TAG] Init failed: ${t.message}")
             registered.set(false)
@@ -120,6 +130,74 @@ object AdbSystemHooks {
         // the Status tab.
         hookPairingDialog()
     }
+
+    /**
+     * Poll /data/local/tmp/adb_x_request_pair every second. When the file
+     * contains "1", trigger an AdbDebuggingManager startAdbPairing()
+     * via reflection; the dialog-relevant port + code land in the same
+     * pairing-port detector already running above. The file is deleted
+     * after the request consumes so a single tap does not fire twice.
+     */
+    private fun startPairRequestWatcher(context: Context, handler: Handler) {
+        val requestFile = File("/data/local/tmp/adb_x_request_pair")
+        val poll = object : Runnable {
+            override fun run() {
+                try {
+                    if (requestFile.exists() && requestFile.length() > 0) {
+                        val raw = requestFile.readText().trim()
+                        XposedInit.log("[$TAG] pair-request detected: $raw")
+                        try { requestFile.delete() } catch (_: Throwable) { }
+                        if (raw == "1") triggerAdbPairing(context)
+                    }
+                } catch (t: Throwable) {
+                    XposedInit.log("[$TAG] pair-request poll error: ${t.message}")
+                }
+                handler.postDelayed(this, 1000L)
+            }
+        }
+        handler.post(poll)
+    }
+
+    /**
+     * Reflectively invoke AdbDebuggingManager.startAdbPairing(). The
+     * method exists across AOSP and OnePlus reshuffles of class names; we
+     * try a few candidates. Whatever the class, the pairing port + code
+     * go through the existing hookPairingDialog detector.
+     */
+    private fun triggerAdbPairing(context: Context) {
+        try {
+            val managerCls = XposedHelpers.findClass(
+                "com.android.server.adb.AdbDebuggingManager", null
+            )
+            val inst = XposedHelpers.callStaticMethod(managerCls, "getInstance")
+                ?: XposedHelpers.newInstance(managerCls, context)
+            val methodNames = arrayOf(
+                "startAdbPairing",
+                "startPairing",
+                "startWirelessAdbPairing",
+                "createAdbPairingService",
+            )
+            var invoked = false
+            for (m in methodNames) {
+                try {
+                    XposedHelpers.callMethod(inst, m)
+                    XposedInit.log("[$TAG] startAdbPairing invoked via $m")
+                    invoked = true
+                    break
+                } catch (_: Throwable) { }
+            }
+            if (!invoked) {
+                XposedInit.log("[$TAG] startAdbPairing: no matching method")
+                Runtime.getRuntime().exec(arrayOf(
+                    "sh", "-c",
+                    "am broadcast -a android.intent.action.ADB_PAIRING_PORT_CHANGED"
+                ))
+            }
+        } catch (t: Throwable) {
+            XposedInit.log("[$TAG] triggerAdbPairing failed: ${t.message}")
+        }
+    }
+
 
     private fun hookPairingDialog() {
         // Candidate classes across Android versions. Each entry is

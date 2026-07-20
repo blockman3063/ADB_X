@@ -205,12 +205,13 @@
                         tools:text="Tap to manage" />
                 </LinearLayout>
 
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:src="@drawable/ic_chevron_right"
-                    app:tint="?attr/colorOnSurfaceVariant"
-                    android:contentDescription="@string/section_pairing_code" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnStartPairing"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/btn_start_pairing" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
