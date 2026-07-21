@@ -44,15 +44,135 @@ object AdbSystemHooks {
         if (!registered.compareAndSet(false, true)) return
         XposedInit.log("[$TAG] Loading system_server hooks")
 
+        // Best-effort hooks first — these don't need system services and
+        // should always run regardless of whether connectivity/wifi come
+        // up in time. They only need class loading, which is stable.
+        hookPairingDialog()
+        hookPairingFuzzy()
+
         try {
             val atClass = XposedHelpers.findClass("android.app.ActivityThread", null)
             val activityThread = XposedHelpers.callStaticMethod(atClass, "currentActivityThread")
             val context = XposedHelpers.callMethod(activityThread, "getSystemContext") as Context
 
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val wm = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            // SAFE cast — on Android 11 (and some early-boot ROMs even on
+            // 13+) ConnectivityManager is not bound to the system context
+            // yet when the Zygote injects us. Forcing a non-null `as`
+            // throws "null cannot be cast to non-null type" and the whole
+            // try-block aborts, killing every callback below. Retry on
+            // the main looper until both services come online.
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val wm = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             val handler = Handler(Looper.getMainLooper())
 
+            if (cm == null || wm == null) {
+                XposedInit.log(
+                    "[$TAG] System services not ready yet " +
+                    "(cm=${cm != null}, wm=${wm != null}); deferring init"
+                )
+                scheduleDeferredInit(context, handler, attempt = 1)
+                return
+            }
+
+            installCallbacks(context, cm, wm, handler)
+        } catch (t: Throwable) {
+            XposedInit.log("[$TAG] Init failed: ${t.message}")
+            // DO NOT clear `registered` — the framework will not invoke
+            // handleLoadPackage again on system_server this boot, and
+            // flipping the flag would let another instance of this hook
+            // double-register NetworkCallbacks on retry. Instead, defer.
+            scheduleDeferredInitRetry(attempt = 1)
+        }
+    }
+
+    /**
+     * Re-attempt to wire up system_server callbacks after the framework
+     * has had a chance to bind connectivity/wifi services. Retries with
+     * exponential backoff up to 60s, then gives up gracefully (the
+     * user can still pair manually via the app).
+     */
+    private fun scheduleDeferredInit(
+        context: Context,
+        handler: Handler,
+        attempt: Int
+    ) {
+        val delayMs = (2000L * attempt).coerceAtMost(60_000L)
+        handler.postDelayed({
+            try {
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                val wm = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                if (cm == null || wm == null) {
+                    if (attempt >= 30) {
+                        XposedInit.log(
+                            "[$TAG] System services never came up after " +
+                            "${attempt} retries — WiFi auto-enable will not work"
+                        )
+                        return@postDelayed
+                    }
+                    XposedInit.log(
+                        "[$TAG] Defer retry #$attempt in ${delayMs}ms " +
+                        "(cm=${cm != null}, wm=${wm != null})"
+                    )
+                    scheduleDeferredInit(context, handler, attempt + 1)
+                    return@postDelayed
+                }
+                XposedInit.log("[$TAG] Deferred init succeeded on attempt $attempt")
+                installCallbacks(context, cm, wm, handler)
+            } catch (t: Throwable) {
+                XposedInit.log("[$TAG] Deferred init failed: ${t.message}")
+                if (attempt < 30) scheduleDeferredInit(context, handler, attempt + 1)
+            }
+        }, delayMs)
+    }
+
+    /**
+     * Deferred retry when the very first try threw (e.g. ActivityThread
+     * getSystemContext returned null because zygote hadn't bootstrapped
+     * it yet). Re-acquires the context from scratch each time.
+     */
+    private fun scheduleDeferredInitRetry(attempt: Int) {
+        val delayMs = (2000L * attempt).coerceAtMost(60_000L)
+        val handler = Handler(Looper.getMainLooper())
+        handler.postDelayed({
+            try {
+                val atClass = XposedHelpers.findClass("android.app.ActivityThread", null)
+                val activityThread = XposedHelpers.callStaticMethod(atClass, "currentActivityThread")
+                val context = XposedHelpers.callMethod(activityThread, "getSystemContext") as Context
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                val wm = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                if (cm == null || wm == null) {
+                    if (attempt >= 30) {
+                        XposedInit.log(
+                            "[$TAG] System services never came up after " +
+                            "${attempt} retries — WiFi auto-enable will not work"
+                        )
+                        return@postDelayed
+                    }
+                    scheduleDeferredInit(context, handler, attempt + 1)
+                    return@postDelayed
+                }
+                XposedInit.log("[$TAG] Deferred retry succeeded on attempt $attempt")
+                installCallbacks(context, cm, wm, handler)
+            } catch (t: Throwable) {
+                XposedInit.log("[$TAG] Deferred retry failed: ${t.message}")
+                if (attempt < 30) scheduleDeferredInitRetry(attempt + 1)
+            }
+        }, delayMs)
+    }
+
+    /**
+     * Actually wire up the WiFi NetworkCallback, the saved-network dump,
+     * and the pair-request watcher. Safe to call multiple times — the
+     * NetworkCallback is a fresh instance each call, so we never
+     * double-register (Android would just dedupe by NetworkRequest).
+     */
+    private fun installCallbacks(
+        context: Context,
+        cm: ConnectivityManager,
+        wm: WifiManager,
+        handler: Handler
+    ) {
+        try {
             val request = NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .build()
@@ -118,18 +238,8 @@ object AdbSystemHooks {
                 XposedInit.log("[$TAG] pair watcher start failed: ${t.message}")
             }
         } catch (t: Throwable) {
-            XposedInit.log("[$TAG] Init failed: ${t.message}")
-            registered.set(false)
+            XposedInit.log("[$TAG] installCallbacks failed: ${t.message}")
         }
-
-        // Best-effort hook: try to catch the temporary ADB pairing port.
-        // On Android 14+, the pairing port lives inside adbd's process
-        // (no setprop), so we try hooking candidate dialog classes that
-        // receive the port on construction. If none match this ROM we
-        // silently skip — the user can still type the port manually in
-        // the Status tab.
-        hookPairingDialog()
-        hookPairingFuzzy()
     }
 
     /**
