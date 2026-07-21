@@ -19,6 +19,10 @@ import top.cbug.adbx.store.Settings
  */
 object LocaleHelper {
 
+    /**
+     * TODO: document wrap
+     * @param Context
+     */
     fun wrap(base: Context): Context {
         val tag = Settings.locale
         if (tag == "system") return base

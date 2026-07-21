@@ -53,6 +53,9 @@ class TrustedWifiWatcher(context: Context) {
     /** Whether the NetworkCallback is currently registered. */
     fun isRunning(): Boolean = callback != null
 
+    /**
+     * TODO: document start
+     */
     fun start() {
         if (callback != null) return
         val request = NetworkRequest.Builder()
@@ -86,6 +89,9 @@ class TrustedWifiWatcher(context: Context) {
         }
     }
 
+    /**
+     * TODO: document stop
+     */
     fun stop() {
         val cb = callback ?: return
         try {

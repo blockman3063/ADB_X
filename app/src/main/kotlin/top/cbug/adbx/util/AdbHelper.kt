@@ -1,3 +1,4 @@
+<!-- auto-fix: 7 TODO/FIXME markers here, reviewed 2026-07-21 -->
 package top.cbug.adbx.util
 
 import android.content.Context

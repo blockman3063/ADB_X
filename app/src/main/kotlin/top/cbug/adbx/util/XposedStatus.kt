@@ -102,8 +102,16 @@ object XposedStatus {
     /** Held statically so XposedInit (running before Application.onCreate) can
      *  reach the application context. Initialised lazily on first access. */
     private var appContext: Context? = null
+    /**
+     * TODO: document init
+     * @param Context
+     */
     fun init(app: Context) { appContext = app.applicationContext }
 
+    /**
+     * TODO: document reset
+     * @param null
+     */
     fun reset(context: Context? = null) {
         try {
             (context ?: appContext)?.getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)

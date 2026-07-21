@@ -264,10 +264,16 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Status refresh (used by fragments) ----------------
 
+    /**
+     * TODO: document refreshStatusAndPairing
+     */
     fun refreshStatusAndPairing() {
         renderXposedStatus()
     }
 
+    /**
+     * TODO: document doFullRefresh
+     */
     fun doFullRefresh() {
         if (refreshInProgress) return
         refreshInProgress = true
@@ -386,6 +392,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * TODO: document refreshWifiList
+     */
     fun refreshWifiList() {
         if (refreshInProgress) {
             toast(getString(R.string.msg_still_loading))
@@ -413,6 +422,10 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Port apply ----------------
 
+    /**
+     * TODO: document applyFixedPort
+     * @param Int
+     */
     fun applyFixedPort(port: Int) {
         AppSettings.fixedPort = port
         AppSettings.save(this)
@@ -428,6 +441,9 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Pairing dialog ----------------
 
+    /**
+     * TODO: document showSetPairingDialog
+     */
     fun showSetPairingDialog() {
         val input = EditText(this).apply {
             hint = getString(R.string.dialog_pairing_hint)
@@ -452,14 +468,23 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * TODO: document openWifiSettingsActivity
+     */
     fun openWifiSettingsActivity() {
         startActivity(Intent(this, WifiSettingsActivity::class.java))
     }
 
+    /**
+     * TODO: document openPairingActivity
+     */
     fun openPairingActivity() {
         startActivity(Intent(this, PairingActivity::class.java))
     }
 
+    /**
+     * TODO: document showXposedHelpDialog
+     */
     fun showXposedHelpDialog() {
         val info = XposedStatus.probe(this)
         val detected = if (info.frameworkPackages.isEmpty()) "  (none)"
@@ -486,6 +511,9 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Permissions ----------------
 
+    /**
+     * TODO: document requestNeededPermissions
+     */
     fun requestNeededPermissions() {
         val missing = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -571,6 +599,9 @@ class MainActivity : AppCompatActivity() {
                 .getString(top.cbug.adbx.WifiStateReceiver.KEY_SSID, "") ?: ""
         } catch (_: Throwable) { "" }
     }
+    /**
+     * TODO: document getTrustedWifiLastActionMs
+     */
     fun getTrustedWifiLastActionMs(): Long {
         return try {
             getSharedPreferences(top.cbug.adbx.WifiStateReceiver.PREFS, android.content.Context.MODE_PRIVATE)
@@ -580,11 +611,20 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Misc helpers ----------------
 
+    /**
+     * TODO: document toast
+     * @param String
+     */
     fun toast(msg: String) {
         if (isFinishing || isDestroyed) return
         mainHandler.post { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
     }
 
+    /**
+     * TODO: document copyToClipboard
+     * @param String
+     * @param String
+     */
     fun copyToClipboard(label: String, text: String) {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText(label, text))
@@ -593,6 +633,11 @@ class MainActivity : AppCompatActivity() {
     fun currentCachedIp(): String = cachedLocalIp
     fun currentCachedPort(): String = cachedPort
 
+    /**
+     * TODO: document toggleTrusted
+     * @param String
+     * @param Boolean
+     */
     fun toggleTrusted(ssid: String, trusted: Boolean) {
         if (trusted) AppSettings.addTrusted(ssid) else AppSettings.removeTrusted(ssid)
         AppSettings.save(this)
