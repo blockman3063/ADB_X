@@ -64,6 +64,8 @@ class StatusFragment : Fragment() {
     private lateinit var cardPairingShortcut: MaterialCardView
     private lateinit var btnStartPairing: MaterialButton
     private lateinit var tvPairingHint: TextView
+    private lateinit var cardTrustedWifi: MaterialCardView
+    private lateinit var tvTrustedWifiSubtitle: TextView
     private lateinit var cardPairingActive: MaterialCardView
     private lateinit var tvPairingConnectionString: TextView
     private lateinit var tvPairingBreakdown: TextView
@@ -95,6 +97,9 @@ class StatusFragment : Fragment() {
         cardPairingShortcut = view.findViewById(R.id.cardPairingShortcut)
         btnStartPairing = view.findViewById(R.id.btnStartPairing)
         tvPairingHint       = view.findViewById(R.id.tvPairingHint)
+
+        cardTrustedWifi      = view.findViewById(R.id.cardTrustedWifi)
+        tvTrustedWifiSubtitle = view.findViewById(R.id.tvTrustedWifiSubtitle)
 
         cardPairingActive         = view.findViewById(R.id.cardPairingActive)
         tvPairingConnectionString = view.findViewById(R.id.tvPairingConnectionString)
@@ -262,6 +267,53 @@ class StatusFragment : Fragment() {
                 act.toast(getString(R.string.msg_copied, cmd))
             }
             tvPairingCountdown.text = getString(R.string.pairing_expires_fmt, 120)
+        }
+
+        renderTrustedWifi(m.ssid)
+    }
+
+    /**
+     * Render the Trusted-WiFi auto-toggle card.
+     */
+    private fun renderTrustedWifi(currentSsid: String) {
+        val settings = top.cbug.adbx.store.Settings
+        val armed = settings.autoEnable || settings.autoDisable
+        val ssidDisplay = if (currentSsid.isBlank()) "—" else currentSsid
+        if (!armed) {
+            tvTrustedWifiSubtitle.text = getString(R.string.trusted_wifi_status_not_armed)
+            return
+        }
+        val subtitle = when {
+            settings.trustedSet().isEmpty() -> getString(R.string.trusted_wifi_status_no_ssids)
+            currentSsid.isBlank() -> {
+                val what = when {
+                    settings.autoEnable && settings.autoDisable -> getString(R.string.sw_auto_enable) + " + " + getString(R.string.sw_auto_disable)
+                    settings.autoEnable -> getString(R.string.sw_auto_enable)
+                    else -> getString(R.string.sw_auto_disable)
+                }
+                getString(R.string.trusted_wifi_status_disabled) + " · " + what
+            }
+            settings.isTrusted(currentSsid) -> getString(R.string.trusted_wifi_status_armed, ssidDisplay, getString(R.string.trusted_wifi_trusted))
+            else -> getString(R.string.trusted_wifi_status_armed, ssidDisplay, getString(R.string.trusted_wifi_untrusted))
+        }
+        val lastAction = (activity as? MainActivity)?.getTrustedWifiLastAction() ?: ""
+        val lastActionMs = (activity as? MainActivity)?.getTrustedWifiLastActionMs() ?: 0L
+        val ago = formatAgo(lastActionMs)
+        val actionLine = if (lastActionMs == 0L) {
+            getString(R.string.trusted_wifi_never_triggered)
+        } else {
+            getString(R.string.trusted_wifi_last_trigger, lastAction, ago)
+        }
+        tvTrustedWifiSubtitle.text = subtitle + "\n" + actionLine
+    }
+
+    private fun formatAgo(ms: Long): String {
+        if (ms == 0L) return ""
+        val deltaMin = ((System.currentTimeMillis() - ms) / 60_000L).toInt()
+        return when {
+            deltaMin < 1 -> getString(R.string.trusted_wifi_just_now)
+            deltaMin < 60 -> getString(R.string.trusted_wifi_ago_minutes, deltaMin)
+            else -> getString(R.string.trusted_wifi_ago_hours, deltaMin / 60)
         }
     }
 

@@ -571,6 +571,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Expose the TrustedWifiWatcher last action info to the Status tab so it
+     *  can render a "last triggered 5 min ago" subtitle. Returns "" / 0L when
+     *  the watcher has never acted. */
+    fun getTrustedWifiLastAction(): String = trustedWifiWatcher?.lastAction() ?: ""
+    fun getTrustedWifiLastActionMs(): Long = trustedWifiWatcher?.lastActionMs() ?: 0L
+
     // ---------------- Misc helpers ----------------
 
     fun toast(msg: String) {

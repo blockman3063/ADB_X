@@ -155,7 +155,62 @@
         </com.google.android.material.card.MaterialCardView>
 
         <!-- Pairing shortcut card (default — when no pairing in progress) -->
-        <com.google.android.material.card.MaterialCardView
+        <!-- Trusted Wi-Fi auto-toggle status card. Shows whether
+         TrustedWifiWatcher is armed and what the most recent SSID it
+         acted on was. -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardTrustedWifi"
+        style="?attr/materialCardViewElevatedStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        app:cardCornerRadius="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:gravity="center_vertical">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:background="?attr/colorSecondaryContainer"
+                app:shapeAppearance="@style/ShapeAppearance.ADB_X.RoundedIcon"
+                app:tint="?attr/colorOnSecondaryContainer"
+                android:src="@drawable/ic_wifi" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="16dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvTrustedWifiTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_trusted_wifi"
+                    android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+                <TextView
+                    android:id="@+id/tvTrustedWifiSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:maxLines="4"
+                    android:ellipsize="end"
+                    tools:text="Auto-enable armed · last triggered 5 min ago" />
+            </LinearLayout>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.card.MaterialCardView
             style="?attr/materialCardViewElevatedStyle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
