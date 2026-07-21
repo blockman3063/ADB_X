@@ -46,6 +46,7 @@ import top.cbug.adbx.ui.WifiSettingsActivity
 import top.cbug.adbx.util.AdbHelper
 import top.cbug.adbx.util.LocaleHelper
 import top.cbug.adbx.util.ShellUtils
+import top.cbug.adbx.util.TrustedWifiWatcher
 import top.cbug.adbx.util.WifiHelper
 import top.cbug.adbx.util.XposedStatus
 
@@ -77,6 +78,7 @@ class MainActivity : AppCompatActivity() {
     private var pairingPollJob: Job? = null
     private var wifiObserver: android.database.ContentObserver? = null
     private var adbObserver: android.database.ContentObserver? = null
+    private var trustedWifiWatcher: TrustedWifiWatcher? = null
 
     // Cached values for click-to-copy + cross-fragment reads.
     private var cachedLocalIp: String = ""
@@ -229,6 +231,19 @@ class MainActivity : AppCompatActivity() {
                 kotlinx.coroutines.delay(PAIRING_POLL_INTERVAL_MS)
             }
         }
+        startTrustedWifiWatcher()
+    }
+
+    private fun startTrustedWifiWatcher() {
+        // When the user lands on a SSID that is in
+        // Settings.trustedSsids, we enable wireless ADB; when they leave
+        // one, Settings.autoDisable decides whether to tear it back down.
+        // Started here (not in onCreate) so it lines up with the
+        // ContentObserver's foreground-only model.
+        if (trustedWifiWatcher == null) {
+            trustedWifiWatcher = TrustedWifiWatcher(this)
+        }
+        trustedWifiWatcher?.start()
     }
 
     override fun onPause() {
@@ -237,6 +252,10 @@ class MainActivity : AppCompatActivity() {
         wifiObserver = null
         pairingPollJob?.cancel()
         pairingPollJob = null
+        // Stop the trusted-WiFi watcher. Android 14+ restricts background
+        // network callbacks, so there is no point in keeping it alive
+        // when the user is not looking at the UI.
+        trustedWifiWatcher?.stop()
     }
 
     override fun onDestroy() {

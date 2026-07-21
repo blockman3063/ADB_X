@@ -31,5 +31,10 @@ class App : Application() {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
         // Settings was already loaded in attachBaseContext; reload is a no-op.
         Settings.load(this)
+        // App-domain trusted-WiFi watcher: drives wireless ADB on/off as
+        // the user moves between SSIDs. The actual NetworkCallback is
+        // registered by MainActivity when it becomes visible (Android
+        // 14+ restricts background callbacks, so there is no point in
+        // running the watcher when the UI is not in front).
     }
 }
