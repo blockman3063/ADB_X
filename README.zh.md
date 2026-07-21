@@ -1,5 +1,15 @@
 # ADB_X — 无线 ADB 调试增强 Xposed 模块
 
+[![Release](https://img.shields.io/github/v/release/blockman3063/ADB_X?style=flat-square&label=Download&color=1565C0)](https://github.com/blockman3063/ADB_X/releases)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/Android-11%2B-3DDC84?style=flat-square&logo=android)](https://developer.android.com/about/versions/11)
+[![Xposed](https://img.shields.io/badge/Xposed-LSPosed-1565C0?style=flat-square)](https://github.com/LSPosed/LSPosed)
+
+> ⚠️ **早期开发版本,问题较多。** 本项目仍处于非常早期的开发阶段,
+> 大量边缘情况、缺失功能、编译失败、ROM 间行为差异都可能出现。
+> 欢迎反馈问题,但请勿在无法回滚的场景下依赖本项目,
+> API 也不保证稳定。
+
 > 📖 **英文文档**:[README.md](README.md)
 
 固定无线调试端口、即时捕获 ADB 配对码、连接信任 WiFi 时自动开启 ADB ——
@@ -111,4 +121,4 @@ ADB_X/
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE)

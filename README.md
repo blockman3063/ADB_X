@@ -1,9 +1,15 @@
 ﻿# ADB_X — Wireless ADB enhancement Xposed module
 
 [![Release](https://img.shields.io/github/v/release/blockman3063/ADB_X?style=flat-square&label=Download&color=1565C0)](https://github.com/blockman3063/ADB_X/releases)
-[![License](https://img.shields.io/github/license/blockman3063/ADB_X?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Android-11%2B-3DDC84?style=flat-square&logo=android)](https://developer.android.com/about/versions/11)
 [![Xposed](https://img.shields.io/badge/Xposed-LSPosed-1565C0?style=flat-square)](https://github.com/LSPosed/LSPosed)
+
+> ⚠️ **Early development — expect bugs.** This project is in a very early
+> stage of development. Expect rough edges, missing features, broken
+> builds, and behavior that varies wildly between ROMs. Please report
+> issues you hit, but do not rely on it for anything you can't recover
+> from, and please don't expect stable APIs yet.
 
 > 📖 **Looking for Chinese documentation?** See [README.zh.md](README.zh.md).
 
@@ -126,4 +132,4 @@ ADB_X/
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE)
