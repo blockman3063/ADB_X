@@ -87,6 +87,15 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
             AppSettings.save(this)
             // Re-sort so trusted jumps to top.
             applyFilterAndSort()
+            // The user just toggled "trusted" — if the currently
+            // connected SSID is the one we just trusted, immediately
+            // re-evaluate and enable wireless ADB instead of waiting
+            // for the next NETWORK_STATE_CHANGED. fireOnce is a
+            // no-op background broadcast (goAsync, 10s budget), so
+            // calling it from the main thread here is safe and fast.
+            if (trusted) {
+                top.cbug.adbx.WifiStateReceiver.fireOnce(this)
+            }
         }
 
         // Live filter as the user types — debounced via text watcher running
