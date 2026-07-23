@@ -23,26 +23,27 @@ object WifiHelper {
      */
     fun getSavedNetworks(context: Context): List<SavedWifi> {
         Log.d(TAG, "getSavedNetworks: rootAvailable=" + ShellUtils.hasRoot() + " contextNull=" + (context == null))
-        // 1. Direct XML parsing (most reliable with root)
-        if (ShellUtils.hasRoot()) {
-            val rootXml = try { getSavedNetworksRootXml() } catch (_: Exception) { emptyList() }
-            if (rootXml.isNotEmpty()) {
-                Log.d(TAG, "Loaded " + rootXml.size + " networks via XML")
-                return rootXml
-            }
-            Log.d(TAG, "XML path returned empty")
-        }
-        Log.d(TAG, "falling through to next method...")
-
-        // 2. cmd wifi via su (captures both stdout and stderr)
+        // On modern Android the saved-network XML store at
+        // /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml is
+        // labelled system_file in SELinux. The app uid (u0_a38) can
+        // not read it even via `su -c cat` — the su binary inherits
+        // the calling process's context, and the su app_policy on
+        // this ROM is restricted to a small set of safe commands.
+        // Probing it adds 2 s × N SU_PATHS per path before failing,
+        // so put cmd wifi first (which talks to system_server and is
+        // not gated by the wifi config store SELinux label) and only
+        // fall back to direct XML if cmd wifi returned nothing.
+        //
+        // 1. cmd wifi via su (fastest, ~30 ms for a 50-network list)
         val cmdNetworks = try { getSavedNetworksCmd() } catch (_: Exception) { emptyList() }
         if (cmdNetworks.isNotEmpty()) {
             Log.d(TAG, "Loaded " + cmdNetworks.size + " networks via cmd wifi")
             return cmdNetworks
         }
-        Log.d(TAG, "cmd wifi path returned empty")
+        Log.d(TAG, "cmd wifi path returned empty, falling through to XML...")
 
-        // 3. dumpsys wifi parsing via root
+        // 2. dumpsys wifi parsing via root (used to be #3 but pulled
+        // up here because XML is gated by SELinux on modern ROMs).
         if (ShellUtils.hasRoot()) {
             val rootDump = try { getSavedNetworksRootDumpsys() } catch (_: Exception) { emptyList() }
             if (rootDump.isNotEmpty()) {
@@ -50,6 +51,18 @@ object WifiHelper {
                 return rootDump
             }
             Log.d(TAG, "dumpsys path returned empty")
+        }
+
+        // 3. Direct XML parsing (most reliable when it works, but
+        // gated by SELinux on modern Android). Only attempt as a
+        // last resort to avoid burning 6 s on a doomed probe.
+        if (ShellUtils.hasRoot()) {
+            val rootXml = try { getSavedNetworksRootXml() } catch (_: Exception) { emptyList() }
+            if (rootXml.isNotEmpty()) {
+                Log.d(TAG, "Loaded " + rootXml.size + " networks via XML")
+                return rootXml
+            }
+            Log.d(TAG, "XML path returned empty")
         }
 
         // 4. Fallback: use WifiManager API (requires location permission)

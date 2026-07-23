@@ -31,7 +31,15 @@ object ShellUtils {
         // su directly instead — if it returns 0 with output we have root.
         for (suPath in SU_PATHS) {
             try {
-                val proc = ProcessBuilder(suPath + "echo ADB_X_ROOT_OK")
+                // suPath is ["/system/bin/su", "-c"]; concat with the
+                // actual command and spread into ProcessBuilder varargs
+                // so it gets [/system/bin/su, -c, echo ADB_X_ROOT_OK].
+                // Without the spread, Kotlin's List+String returns a
+                // 3-element List that ProcessBuilder then unpacks
+                // without the -c flag, which makes su start a daemon
+                // shell that never finishes our probe.
+                val cmd = suPath + "echo ADB_X_ROOT_OK"
+                val proc = ProcessBuilder(*cmd.toTypedArray())
                     .redirectErrorStream(true)
                     .start()
                 val finished = proc.waitFor(PROBE_TIMEOUT_MS * 30, TimeUnit.MILLISECONDS)
@@ -105,7 +113,8 @@ object ShellUtils {
             val cached = workingSuPath
             if (cached != null) {
                 try {
-                    val proc = ProcessBuilder(cached + command)
+                    val cmd = cached + command
+                    val proc = ProcessBuilder(*cmd.toTypedArray())
                         .redirectErrorStream(true)
                         .start()
                     val finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
@@ -118,7 +127,8 @@ object ShellUtils {
             }
             for (suPath in SU_PATHS) {
                 try {
-                    val proc = ProcessBuilder(suPath + command)
+                    val cmd = suPath + command
+                    val proc = ProcessBuilder(*cmd.toTypedArray())
                         .redirectErrorStream(true)
                         .start()
                     val finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
