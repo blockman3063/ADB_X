@@ -1,4 +1,3 @@
-<!-- auto-fix: 13 TODO/FIXME markers here, reviewed 2026-07-22 -->
 package top.cbug.adbx
 
 import android.Manifest
