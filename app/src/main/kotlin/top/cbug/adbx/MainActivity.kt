@@ -393,31 +393,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * TODO: document refreshWifiList
+     * Refresh the wifi list. Previously called from NetworkFragment
+     * on first resume / refresh-button tap, but it shared
+     * refreshInProgress with doFullRefresh() and would toast
+     * "仍在加载" every time the user switched tabs while a status
+     * refresh was in flight. The wifi list now lives inside
+     * WifiSettingsActivity, which has its own per-activity loading
+     * state — no MainActivity-level orchestration needed. The method
+     * is kept here only as a no-op shim in case external callers
+     * (e.g. tests) still reference it.
      */
+    @Deprecated("Wi-Fi list is loaded by WifiSettingsActivity itself.")
     fun refreshWifiList() {
-        if (refreshInProgress) {
-            toast(getString(R.string.msg_still_loading))
-            return
-        }
-        refreshInProgress = true
-        bgScope.launch {
-            try {
-                ShellUtils.probeRootFast()
-                val networks = WifiHelper.getSavedNetworks(this@MainActivity)
-                val items = networks.map { WifiItem(it.ssid, it.bssid, it.security) }
-                // List now lives in WifiSettingsActivity; nothing to
-                // push back to NetworkFragment on the tab itself.
-                withContext(Dispatchers.Main) { }
-            } catch (t: Throwable) {
-                Log.w(TAG, "refreshWifiList failed", t)
-                withContext(Dispatchers.Main) {
-                    toast(getString(R.string.msg_wifi_refresh_fail, t.message ?: ""))
-                }
-            } finally {
-                refreshInProgress = false
-            }
-        }
+        // Intentionally empty. The wifi tab no longer surfaces the
+        // list and WifiSettingsActivity owns the loading lifecycle.
     }
 
     // ---------------- Port apply ----------------

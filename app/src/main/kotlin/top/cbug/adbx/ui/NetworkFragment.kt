@@ -22,6 +22,14 @@ import top.cbug.adbx.store.Settings as AppSettings
  * shortcut that opens the full list with search + sort in a dedicated
  * activity (WifiSettingsActivity). The list itself no longer lives
  * here — the tab is the entry point, not the table.
+ *
+ * Loading policy: the tab itself does no network work. The moment the
+ * user taps the "管理 Wi-Fi" card we launch WifiSettingsActivity, which
+ * runs its own refresh() and shows the list inside its own context bar.
+ * Previously this fragment triggered a wifi scan on first resume and
+ * showed a "仍在加载…" toast whenever doFullRefresh() had already set
+ * the shared refreshInProgress flag — that toast was firing on every
+ * tab switch, which was confusing. The tab now stays quiet.
  */
 class NetworkFragment : Fragment() {
 
@@ -34,8 +42,6 @@ class NetworkFragment : Fragment() {
     private lateinit var btnApplyPort: MaterialButton
     private lateinit var tvAddress: TextView
     private lateinit var btnCopyAddress: MaterialButton
-
-    private var firstResume = true
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -58,12 +64,20 @@ class NetworkFragment : Fragment() {
         renderPortControls()
         renderAddress()
 
+        // The tab itself never loads the wifi list — opening the dedicated
+        // activity triggers its own refresh(). WifiSettingsActivity owns
+        // its loading state, so we don't share `refreshInProgress` with
+        // MainActivity.doFullRefresh() any more.
         cardWifiList.setOnClickListener {
             (activity as? MainActivity)?.openWifiSettingsActivity()
         }
         btnRefreshWifi.setOnClickListener {
-            (activity as? MainActivity)?.requestNeededPermissions()
-            (activity as? MainActivity)?.refreshWifiList()
+            // Keep the button as a no-op affordance that opens the list
+            // — the dedicated activity has its own refresh control. Avoid
+            // running MainActivity.refreshWifiList() because it shares
+            // a single-flight flag with doFullRefresh() and would toast
+            // "仍在加载" while a full status refresh is in flight.
+            (activity as? MainActivity)?.openWifiSettingsActivity()
         }
 
         swFixedPort.setOnCheckedChangeListener { _, checked ->
@@ -103,17 +117,12 @@ class NetworkFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        // Cheap: just re-render from in-memory Settings + cached IP/port
+        // values that MainActivity already keeps. No shell, no wifi scan.
         AppSettings.load(requireContext())
         renderTrustedChips()
         renderPortControls()
         renderAddress()
-
-        if (firstResume) {
-            firstResume = false
-            val act = activity as? MainActivity ?: return
-            act.requestNeededPermissions()
-            act.refreshWifiList()
-        }
     }
 
     private fun renderTrustedChips() {
