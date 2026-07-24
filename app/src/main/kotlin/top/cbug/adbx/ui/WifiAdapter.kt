@@ -6,7 +6,6 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.chip.Chip
 import com.google.android.material.materialswitch.MaterialSwitch
 import top.cbug.adbx.R
 import top.cbug.adbx.store.Settings as AppSettings
@@ -108,7 +107,7 @@ class WifiAdapter(
     inner class NetworkVH(view: View) : RecyclerView.ViewHolder(view) {
         private val ivCheck: ImageView = view.findViewById(R.id.ivWifiConnectedCheck)
         private val tvSsid: TextView = view.findViewById(R.id.tvWifiSsid)
-        private val chipSaved: Chip = view.findViewById(R.id.chipSaved)
+        private val chipSaved: TextView = view.findViewById(R.id.chipSaved)
         private val tvSecurity: TextView = view.findViewById(R.id.tvWifiSecurity)
         private val tvSignal: TextView = view.findViewById(R.id.tvWifiSignal)
         private val swTrusted: MaterialSwitch = view.findViewById(R.id.swTrusted)

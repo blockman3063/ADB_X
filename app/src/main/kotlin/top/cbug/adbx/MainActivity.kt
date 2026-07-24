@@ -41,7 +41,6 @@ import top.cbug.adbx.ui.NetworkFragment
 import top.cbug.adbx.ui.SettingsFragment
 import top.cbug.adbx.ui.StatusFragment
 import top.cbug.adbx.ui.WifiAdapter
-import top.cbug.adbx.ui.WifiItem
 import top.cbug.adbx.ui.WifiSettingsActivity
 import top.cbug.adbx.util.AdbHelper
 import top.cbug.adbx.util.LocaleHelper
@@ -138,8 +137,7 @@ class MainActivity : AppCompatActivity() {
             bottomNav.setOnItemSelectedListener { item ->
                 switchTo(when (item.itemId) {
                     R.id.tab_status   -> StatusFragment()
-                    R.id.tab_networks -> NetworkFragment()
-                    R.id.tab_networks -> NetworkFragment()
+                    R.id.tab_wireless -> NetworkFragment()
                     R.id.tab_settings -> SettingsFragment()
                     else               -> StatusFragment()
                 })

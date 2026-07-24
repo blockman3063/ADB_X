@@ -69,18 +69,24 @@
                     android:ellipsize="end"
                     tools:text="MyHomeWiFi" />
 
-                <!-- "Saved" chip — visible for networks we have a
-                     configured profile for, hidden otherwise. -->
-                <com.google.android.material.chip.Chip
+                <!-- "Saved" badge — visible for networks we have
+                     a configured profile for, hidden otherwise.
+                     Using a TextView rather than a Material Chip to
+                     avoid runtime style resolution failures on
+                     devices where the Material3 widget library
+                     version differs. -->
+                <TextView
                     android:id="@+id/chipSaved"
-                    style="@style/Widget.Material3.Chip.Assist.Elevated"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="2dp"
                     android:text="@string/wifi_saved_badge"
                     android:textAppearance="?attr/textAppearanceLabelSmall"
+                    android:textColor="?attr/colorOnSecondaryContainer"
+                    android:background="?attr/colorSecondaryContainer"
                     android:layout_marginStart="8dp"
                     android:visibility="gone"
-                    app:chipMinHeight="24dp"
                     tools:visibility="visible" />
             </LinearLayout>
 
