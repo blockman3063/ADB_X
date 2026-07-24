@@ -127,19 +127,22 @@
     <string name="about_version">版本</string>
     <string name="about_module_id">模块 ID</string>
     <string name="about_source_code">源代码</string>
-    <!-- 信任 Wi-Fi 自动开关卡片 -->
-    <string name="section_trusted_wifi">信任 Wi-Fi 自动开关</string>
-    <string name="trusted_wifi_status_armed">自动开关已开启 · 当前 SSID %1$s (%2$s)</string>
-    <string name="trusted_wifi_status_disabled">自动开关已开启但在设置里被关闭</string>
-    <string name="trusted_wifi_status_no_ssids">自动开关已开启 · 还没有标记任何信任网络</string>
-    <string name="trusted_wifi_status_not_armed">自动开关已关闭</string>
-    <string name="trusted_wifi_trusted">信任</string>
-    <string name="trusted_wifi_untrusted">不信任</string>
+    <!-- Trusted Wi-Fi auto-toggle card -->
+    <string name="section_trusted_wifi">信任 Wi-Fi</string>
+    <string name="trusted_wifi_status_armed">自动开关已开启 · 当前 SSID %1$s %2$s</string>
+    <string name="trusted_wifi_status_disabled">自动开关已开启,但设置中已禁用</string>
+    <string name="trusted_wifi_status_no_ssids">自动开关已开启 · 尚未添加受信任网络</string>
+    <string name="trusted_wifi_status_not_armed">自动开关未开启</string>
+    <string name="trusted_wifi_trusted">已信任</string>
+    <string name="trusted_wifi_untrusted">未信任</string>
     <string name="trusted_wifi_last_trigger">最近触发: %1$s (%2$s)</string>
     <string name="trusted_wifi_never_triggered">还没有触发过</string>
     <string name="trusted_wifi_ago_minutes">%1$d 分钟前</string>
     <string name="trusted_wifi_ago_hours">%1$d 小时前</string>
     <string name="trusted_wifi_just_now">刚刚</string>
+    <string name="trust_current_ssid">信任</string>
+    <string name="trust_current_ssid_remove">取消信任</string>
+    <string name="trust_current_ssid_none">无 SSID</string>
     <!-- 信任 Wi-Fi 前台服务通知 -->
     <string name="trusted_wifi_channel_name">信任 Wi-Fi 自动开关</string>
     <string name="trusted_wifi_channel_desc">自动开关服务运行时显示的常驻通知</string>

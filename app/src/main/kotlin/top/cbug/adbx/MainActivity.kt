@@ -60,6 +60,11 @@ import top.cbug.adbx.util.XposedStatus
  */
 class MainActivity : AppCompatActivity() {
 
+    /** Last SSID we observed in [doMinimalRefresh]. The Status tab's
+     *  trust-toggle button reads this so it doesn't have to query the
+     *  WifiManager itself (which can take 50-200 ms on a cold start). */
+    @Volatile var currentSsid: String = ""
+
     companion object {
         private const val TAG = "ADB_X_Main"
         private const val REQUEST_LOCATION = 1001
@@ -281,6 +286,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 val st = AdbHelper.getFullStatus(this@MainActivity)
                 val ssid = try { WifiHelper.getCurrentSsid(this@MainActivity) } catch (_: Exception) { "" }
+                currentSsid = ssid
                 val ip = try { WifiHelper.getLocalIpAddress(this@MainActivity) } catch (_: Exception) { "" }
                 val extIp = try { WifiHelper.getExternalIpAddress() } catch (_: Exception) { "" }
                 val xposed = XposedStatus.probe(this@MainActivity)
@@ -538,10 +544,11 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Minimal refresh on first launch ----------------
 
-    private fun doMinimalRefresh() {
+    internal fun doMinimalRefresh() {
         bgScope.launch {
             try {
                 val ssid = try { WifiHelper.getCurrentSsid(this@MainActivity) } catch (_: Exception) { "" }
+                currentSsid = ssid
                 val portNonRoot = AdbHelper.getCurrentPortNonRoot()
                 val adbEnabled = portNonRoot.isNotEmpty()
                 val pairingPort = try { AdbHelper.getPairingPort() } catch (_: Exception) { "" }

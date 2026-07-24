@@ -1,6 +1,7 @@
 package top.cbug.adbx.util
 
 import android.content.Context
+import android.content.Intent
 import android.provider.Settings
 import android.util.Log
 import java.io.File
@@ -437,16 +438,39 @@ object AdbHelper {
      * AdbDebuggingManager state from outside system_server, and on
      * this ROM the hook is not injected into system_server).
      */
-    fun triggerPairing(): Boolean {
-        // AOSP IAdbManager AIDL: enablePairingByPairingCode is at
-        // transaction code 8 (FIRST_CALL_TRANSACTION + 7). The 0-indexed
-        // methods (allowDebugging, denyDebugging, ...) are followed by
-        // enablePairingByPairingCode, which sends the intent
-        // WIRELESS_DEBUG_ENABLE_DISCOVER_ACTION and spawns the
-        // pairing port.
+    fun triggerPairing(context: Context? = null): Boolean {
+        val ctx = context ?: top.cbug.adbx.App.appContext
+        // First try: shell `service call adb 8`. This works when the
+        // caller has adb-service permission (shell uid) but can fail
+        // for app uid even via su, because the servicemanager binder
+        // gates IAdbManager by SELinux context, not by effective uid.
+        // We still try because in some setups (debug shell uid,
+        // zero-config KSU) it works.
         Log.d(TAG, "triggerPairing: service call adb 8")
-        val r = ShellUtils.executeSu("service call adb 8", 3000)
-        return r.isSuccess()
+        val suAttempt = ShellUtils.executeSu("service call adb 8", 3000)
+        if (suAttempt.isSuccess()) return true
+        // Second try: open the Developer Options wireless-debug screen
+        // directly via Settings Intent. The user then taps "Pair device"
+        // themselves, which goes through the system-level IAdbManager
+        // and shows the dialog. We don't need any special permission to
+        // start an Activity from our own context.
+        if (ctx != null) {
+            try {
+                val devIntent = Intent(
+                    Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
+                ).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+                ctx.startActivity(devIntent)
+                Log.d(TAG, "triggerPairing: opened Developer Options via Settings Intent")
+                return true
+            } catch (t: Throwable) {
+                Log.w(TAG, "triggerPairing: Settings Intent fallback failed: " + t.message)
+            }
+        }
+        Log.w(TAG, "triggerPairing: all attempts failed")
+        return false
     }
 
 

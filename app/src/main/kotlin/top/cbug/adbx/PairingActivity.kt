@@ -83,7 +83,7 @@ class PairingActivity : AppCompatActivity() {
             // WIRELESS_DEBUG_ENABLE_DISCOVER_ACTION intent — same path
             // as the user tapping "Pair device with pairing code" in
             // Developer Options.
-            val ok = AdbHelper.triggerPairing()
+            val ok = AdbHelper.triggerPairing(this)
             if (ok) {
                 Toast.makeText(this, getString(R.string.msg_pair_requested), Toast.LENGTH_SHORT).show()
                 // Refresh status so the port + code appear as soon as

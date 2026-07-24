@@ -22,7 +22,9 @@ import top.cbug.adbx.MainActivity
 import top.cbug.adbx.R
 import top.cbug.adbx.util.AdbHelper
 import top.cbug.adbx.util.ShellUtils
+import top.cbug.adbx.util.WifiHelper
 import top.cbug.adbx.util.XposedStatus
+import top.cbug.adbx.store.Settings as AppSettings
 
 /**
  * Status tab — Xposed card + 5 status indicators + ADB enable/disable
@@ -46,7 +48,6 @@ class StatusFragment : Fragment() {
         val externalIp: String,
         val hasRoot: Boolean,
     )
-
     private lateinit var cardXposedStatus: MaterialCardView
     private lateinit var tvXposedTitle: TextView
     private lateinit var tvXposedSubtitle: TextView
@@ -66,6 +67,7 @@ class StatusFragment : Fragment() {
     private lateinit var tvPairingHint: TextView
     private lateinit var cardTrustedWifi: MaterialCardView
     private lateinit var tvTrustedWifiSubtitle: TextView
+    private lateinit var btnTrustCurrentSsid: MaterialButton
     private lateinit var cardPairingActive: MaterialCardView
     private lateinit var tvPairingConnectionString: TextView
     private lateinit var tvPairingBreakdown: TextView
@@ -100,6 +102,7 @@ class StatusFragment : Fragment() {
 
         cardTrustedWifi      = view.findViewById(R.id.cardTrustedWifi)
         tvTrustedWifiSubtitle = view.findViewById(R.id.tvTrustedWifiSubtitle)
+        btnTrustCurrentSsid = view.findViewById(R.id.btnTrustCurrentSsid)
 
         cardPairingActive         = view.findViewById(R.id.cardPairingActive)
         tvPairingConnectionString = view.findViewById(R.id.tvPairingConnectionString)
@@ -281,7 +284,21 @@ class StatusFragment : Fragment() {
         val ssidDisplay = if (currentSsid.isBlank()) "—" else currentSsid
         if (!armed) {
             tvTrustedWifiSubtitle.text = getString(R.string.trusted_wifi_status_not_armed)
+            btnTrustCurrentSsid.visibility = View.GONE
             return
+        }
+        // The trust button is the user's shortcut — show it whenever
+        // there's an SSID to act on, regardless of whether auto-toggle
+        // has been armed.
+        if (currentSsid.isBlank()) {
+            btnTrustCurrentSsid.visibility = View.GONE
+        } else {
+            val trusted = settings.isTrusted(currentSsid)
+            btnTrustCurrentSsid.text = getString(
+                if (trusted) R.string.trust_current_ssid_remove
+                else R.string.trust_current_ssid
+            )
+            btnTrustCurrentSsid.visibility = View.VISIBLE
         }
         val subtitle = when {
             settings.trustedSet().isEmpty() -> getString(R.string.trusted_wifi_status_no_ssids)
@@ -344,6 +361,30 @@ class StatusFragment : Fragment() {
 
         btnStartPairing.setOnClickListener { triggerInAppPairing() }
 
+        // Trust-current-SSID toggle inside the trusted-wifi card.
+        // Lets users enable auto-toggle without first opening the wifi
+        // management screen and toggling the switch there.
+        btnTrustCurrentSsid.setOnClickListener {
+            val act = (activity as? MainActivity)
+                ?: return@setOnClickListener
+            // Read the SSID from MainActivity's cached state — the
+            // Status tab is showing it already, so we don't have to
+            // query the WifiManager again just for the trust-toggle.
+            val currentSsid = WifiHelper.cleanSsid(act.currentSsid)
+            if (currentSsid.isBlank()) return@setOnClickListener
+            AppSettings.load(requireContext())
+            if (AppSettings.isTrusted(currentSsid)) {
+                AppSettings.removeTrusted(currentSsid)
+            } else {
+                AppSettings.addTrusted(currentSsid)
+            }
+            AppSettings.save(requireContext())
+            // Re-evaluate the trigger so the user sees the toggle
+            // take effect immediately instead of waiting for the
+            // next NETWORK_STATE_CHANGED.
+            top.cbug.adbx.WifiStateReceiver.fireOnce(requireContext())
+            act.doMinimalRefresh()
+        }
     }
 
     /**
@@ -375,12 +416,13 @@ class StatusFragment : Fragment() {
      */
     private fun triggerInAppPairing() {
         try {
-            // Direct call to IAdbManager.enablePairingByPairingCode via
-            // shell `service call adb 8` (AOSP transaction code 8).
-            // No LSPosed hook required — works without root-of-the-OS
-            // tricks since the shell uid can talk to the adb service
-            // manager.
-            val ok = AdbHelper.triggerPairing()
+            // Calls IAdbManager.enablePairingByPairingCode via shell
+            // `service call adb 8` (AOSP transaction code 8). If the
+            // shell path is gated (e.g. app uid via su, where
+            // servicemanager denies by SELinux context) the helper
+            // opens the Developer Options screen as a fallback so
+            // the user can still enable pairing via the UI tap.
+            val ok = AdbHelper.triggerPairing(requireContext())
             if (ok) {
                 android.widget.Toast.makeText(
                     requireContext(),

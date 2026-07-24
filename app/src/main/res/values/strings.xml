@@ -147,6 +147,9 @@
     <string name="trusted_wifi_ago_minutes">%1$d min ago</string>
     <string name="trusted_wifi_ago_hours">%1$d h ago</string>
     <string name="trusted_wifi_just_now">just now</string>
+    <string name="trust_current_ssid">Trust</string>
+    <string name="trust_current_ssid_remove">Untrust</string>
+    <string name="trust_current_ssid_none">No SSID</string>
     <!-- Trusted-WiFi foreground service notification -->
     <string name="trusted_wifi_channel_name">Trusted Wi-Fi auto-toggle</string>
     <string name="trusted_wifi_channel_desc">Persistent notification shown while the auto-toggle service is running</string>
