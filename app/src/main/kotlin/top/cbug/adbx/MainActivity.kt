@@ -40,6 +40,7 @@ import top.cbug.adbx.store.Settings as AppSettings
 import top.cbug.adbx.ui.NetworkFragment
 import top.cbug.adbx.ui.SettingsFragment
 import top.cbug.adbx.ui.StatusFragment
+import top.cbug.adbx.ui.WiredFragment
 import top.cbug.adbx.ui.WifiAdapter
 import top.cbug.adbx.ui.WifiSettingsActivity
 import top.cbug.adbx.util.AdbHelper
@@ -138,6 +139,7 @@ class MainActivity : AppCompatActivity() {
                 switchTo(when (item.itemId) {
                     R.id.tab_status   -> StatusFragment()
                     R.id.tab_wireless -> NetworkFragment()
+                    R.id.tab_wired    -> WiredFragment()
                     R.id.tab_settings -> SettingsFragment()
                     else               -> StatusFragment()
                 })

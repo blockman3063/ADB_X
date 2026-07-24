@@ -9,6 +9,10 @@
         android:icon="@drawable/ic_wifi"
         android:title="@string/nav_wireless" />
     <item
+        android:id="@+id/tab_wired"
+        android:icon="@drawable/ic_usb"
+        android:title="@string/nav_wired" />
+    <item
         android:id="@+id/tab_settings"
         android:icon="@drawable/ic_settings"
         android:title="@string/nav_settings" />

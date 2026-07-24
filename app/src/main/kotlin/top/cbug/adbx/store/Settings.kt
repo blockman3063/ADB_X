@@ -17,6 +17,9 @@ object Settings {
     private const val KEY_BOOT_START = "boot_start"
     private const val KEY_LOCALE = "locale"
     private const val KEY_WIFI_SORT = "wifi_sort"
+    private const val KEY_WIRED_AUTO_ENABLE = "wired_auto_enable"
+    private const val KEY_WIRED_AUTO_DISABLE = "wired_auto_disable"
+    private const val KEY_TRUSTED_USB_SERIALS = "trusted_usb_serials"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -28,8 +31,15 @@ object Settings {
     @Volatile var bootStart = true
     @Volatile var locale: String = "system"
     @Volatile var wifiSortMode: Int = 1   // "system" | "en" | "zh"
+    // Wired-USB auto-toggle. Defaults mirror wireless: arm on
+    // (autoEnable=true) but leave autoDisable off (you don't usually
+    // want ADB turning off when you unplug).
+    @Volatile var wiredAutoEnable = true
+    @Volatile var wiredAutoDisable = false
+    @Volatile var usbAdbEnabled = false
 
     private var trustedSsids: MutableSet<String> = mutableSetOf()
+    private var trustedUsbSerials: MutableSet<String> = mutableSetOf()
 
     /**
      * TODO: document load
@@ -45,6 +55,10 @@ object Settings {
         locale = p.getString(KEY_LOCALE, "system") ?: "system"
         wifiSortMode = p.getInt(KEY_WIFI_SORT, 1)
         trustedSsids = p.getStringSet(KEY_TRUSTED_SSIDS, emptySet())!!.toMutableSet()
+        wiredAutoEnable = p.getBoolean(KEY_WIRED_AUTO_ENABLE, true)
+        wiredAutoDisable = p.getBoolean(KEY_WIRED_AUTO_DISABLE, false)
+        usbAdbEnabled = p.getBoolean("usb_adb_enabled", false)
+        trustedUsbSerials = p.getStringSet(KEY_TRUSTED_USB_SERIALS, emptySet())!!.toMutableSet()
     }
 
     /**
@@ -76,9 +90,32 @@ object Settings {
 
     fun trustedSet(): Set<String> = trustedSsids.toSet()
 
+    fun trustedUsbSet(): Set<String> = trustedUsbSerials.toSet()
+
     /**
-     * TODO: document save
-     * @param Context
+     * Mark the given USB device serial as trusted. Save to persist.
+     * Trust assignment is independent of the wireless trust set —
+     * a user is welcome to trust their laptop over USB but never the
+     * coffee-shop Wi-Fi, and vice versa.
+     */
+    fun addTrustedUsb(serial: String) {
+        val clean = serial.trim()
+        if (clean.isNotEmpty() && clean != "unknown") trustedUsbSerials.add(clean)
+    }
+
+    fun removeTrustedUsb(serial: String) {
+        trustedUsbSerials.remove(serial.trim())
+    }
+
+    fun isTrustedUsb(serial: String): Boolean {
+        val s = serial.trim()
+        return s.isNotEmpty() && s != "unknown" && trustedUsbSerials.contains(s)
+    }
+
+    /**
+     * Persist settings to SharedPreferences and kick off the
+     * world-readable config mirror write in a background thread
+     * (the syncConfigToFile path uses su which would block main).
      */
     fun save(context: Context) {
         prefs(context).edit()
@@ -90,12 +127,17 @@ object Settings {
             .putString(KEY_LOCALE, locale)
             .putInt(KEY_WIFI_SORT, wifiSortMode)
             .putStringSet(KEY_TRUSTED_SSIDS, trustedSsids)
+            .putBoolean(KEY_WIRED_AUTO_ENABLE, wiredAutoEnable)
+            .putBoolean(KEY_WIRED_AUTO_DISABLE, wiredAutoDisable)
+            .putBoolean("usb_adb_enabled", usbAdbEnabled)
+            .putStringSet(KEY_TRUSTED_USB_SERIALS, trustedUsbSerials)
             .apply()
         // Defer config sync to background thread to avoid su blocking main thread
         thread(name = "adb-x-sync") {
             syncConfigToFile()
         }
     }
+
 
     /** Sync settings to world-readable file for Xposed module fallback.
      *  Runs on a background thread - do NOT call from main thread. */
@@ -109,6 +151,10 @@ object Settings {
             appendLine("locale=" + locale)
             appendLine("wifi_sort=" + wifiSortMode)
             appendLine("trusted_ssids=" + trustedSsids.joinToString(","))
+            appendLine("wired_auto_enable=" + wiredAutoEnable)
+            appendLine("wired_auto_disable=" + wiredAutoDisable)
+            appendLine("usb_adb_enabled=" + usbAdbEnabled)
+            appendLine("trusted_usb_serials=" + trustedUsbSerials.joinToString(","))
         }
         try {
             val file = File(SYNC_CONFIG_FILE)

@@ -76,7 +76,23 @@
                <action android:name="android.net.wifi.NETWORK_STATE_CHANGED" />
                <action android:name="top.cbug.adbx.action.WIFI_EVAL" />
            </intent-filter>
-       </receiver><meta-data
+       </receiver>
+
+       <!-- USB device attach / detach — used by the Wired tab to
+            auto-toggle USB ADB on trusted hosts. The system delivers
+            these broadcasts without permissions, so no extras are
+            needed beyond the receiver being registered. -->
+       <receiver
+           android:name=".UsbStateReceiver"
+           android:exported="false">
+           <intent-filter>
+               <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+               <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
+               <action android:name="top.cbug.adbx.action.USB_EVAL" />
+           </intent-filter>
+       </receiver>
+
+        <meta-data
             android:name="xposedmodule"
             android:value="true" />
         <meta-data
