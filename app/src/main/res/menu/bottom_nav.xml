@@ -5,9 +5,9 @@
         android:icon="@drawable/ic_status"
         android:title="@string/nav_status" />
     <item
-        android:id="@+id/tab_networks"
+        android:id="@+id/tab_wireless"
         android:icon="@drawable/ic_wifi"
-        android:title="@string/nav_networks" />
+        android:title="@string/nav_wireless" />
     <item
         android:id="@+id/tab_settings"
         android:icon="@drawable/ic_settings"

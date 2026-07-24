@@ -6,7 +6,56 @@ import android.net.wifi.WifiManager
 import android.net.wifi.WifiConfiguration
 import android.os.Build
 
-data class SavedWifi(val ssid: String, val bssid: String?, val security: String)
+/**
+ * One row in the wifi management screen. Captures everything the
+ * Android Wi-Fi settings panel shows: identity, link state, signal,
+ * and trust settings state. Sections in the screen are derived from
+ * a list of these — see [WifiSection].
+ */
+data class SavedWifi(
+    val ssid: String,
+    val bssid: String?,
+    val security: String,
+    /**
+     * RSSI in dBm. `-127` is the "no signal" sentinel. We do not
+     * derive a 0-4 bar count here — the UI does it from a band table.
+     */
+    val signalDbm: Int = -127,
+    /** True iff the OS reports this network as the currently linked
+     *  interface (WifiManager.connectionInfo.ssid matches). */
+    val isConnected: Boolean = false,
+    /** True iff we have a saved profile for this SSID (we showed up
+     *  in /data/misc/.../WifiConfigStore.xml or cmd wifi list). */
+    val isSaved: Boolean = true,
+    /** Last time we saw this network in a scan, in millis since epoch.
+     *  -1 if we never saw it actively scanned (only saved-config). */
+    val lastSeenMs: Long = -1L,
+    /** True iff this is a 2.4 GHz BSSID. False if 5/6 GHz. Used as a
+     *  hint for the band filter chip; Android's Wi-Fi panel does
+     *  the same (separate 2.4 / 5 / 6 groups). */
+    val is2g: Boolean = true,
+)
+
+/** Section kind, used by [WifiAdapter] to render a divider header
+ *  before each subsection (matches the system Wi-Fi settings:
+ *  Current network / Saved networks / Available networks). */
+enum class WifiSection { CURRENT, SAVED, AVAILABLE }
+
+/** A network that the kernel/wpa_supplicant reports as visible right
+ *  now, or that the OS has linked. Distinct from [SavedWifi] (which
+ *  represents a configured profile in /data/misc/.../WifiConfigStore)
+ *  because a visible network is not necessarily saved — the UI
+ *  caller decides whether to render it as "available, not yet
+ *  configured" or fold it into the saved list if a profile exists.
+ */
+data class VisibleNetwork(
+    val ssid: String,
+    val bssid: String,
+    val rssi: Int,
+    val freq: Int,
+    val is2g: Boolean,
+    val lastSeenMs: Long
+)
 
 object WifiHelper {
 
@@ -21,6 +70,171 @@ object WifiHelper {
      * TODO: document getSavedNetworks
      * @param Context
      */
+
+
+    // ---------------- Scan / signal / connection-state awareness ----------------
+    //
+    // The plain "list of saved networks" path doesn't tell the user
+    // about networks that are in range but not saved (e.g. the office
+    // Wi-Fi a colleague once typed in), nor does it surface signal
+    // strength. The follow methods parse `dumpsys wifi` to extract the
+    // currently-linked interface and the set of visible networks
+    // with their RSSI + frequency, so the wifi management UI can
+    // render the same three sections that Android's own Wi-Fi panel
+    // does: Currently connected / Saved / Available.
+
+    /** RSSI band → bar count (0..4). Used by the adapter to pick a
+     *  signal icon. We use the standard Android thresholds: noise
+     *  floor ~-100, very weak -89, weak -79, good -69, strong -59,
+     *  very strong >=-49. */
+    fun rssiToBars(rssi: Int): Int = when {
+        rssi >= -50 -> 4
+        rssi >= -60 -> 3
+        rssi >= -70 -> 2
+        rssi >= -80 -> 1
+        else -> 0
+    }
+
+    /**
+     * Parse the "Wi-Fi:" lines of `dumpsys wifi`. Each entry looks
+     * like:
+     *   Wi-Fi: 90:e2:ba:c5:09:42, SSID = "Foo", BSSID = 90:e2:ba:c5:09:42,
+     *          RSSI = -42, freq = 5220, level = 4, cap = ...
+     *
+     * Returns at most [limit] entries (newest first by virtue of
+     * dumpsys ordering, which is best-effort sorted by last-scan).
+     */
+    fun parseVisibleNetworks(dumpsysOutput: String, limit: Int = 100): List<VisibleNetwork> {
+        val result = mutableListOf<VisibleNetwork>()
+        for (line in dumpsysOutput.lines()) {
+            val trimmed = line.trimStart()
+            if (!trimmed.startsWith("Wi-Fi:")) continue
+            val ssid = Regex("""SSID\s*=\s*"([^"]*)"""").find(trimmed)?.groupValues?.getOrNull(1)
+            val bssid = Regex("""BSSID\s*=\s*([0-9a-fA-F:]{17})""").find(trimmed)?.groupValues?.getOrNull(1)
+            val rssi = Regex("""RSSI\s*=\s*(-?\d+)""").find(trimmed)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val freq = Regex("""(?:freq|frequency)\s*=\s*(\d+)""").find(trimmed)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            if (ssid.isNullOrBlank() || bssid.isNullOrBlank() || rssi == null) continue
+            val ssidClean = cleanSsid(ssid)
+            if (ssidClean.isBlank()) continue
+            // 2.4 GHz: channels 1-14, freq 2412-2484; 5 GHz: >=5000.
+            val is2g = freq != null && freq in 2400..2500
+            result.add(VisibleNetwork(ssid = ssidClean, bssid = bssid,
+                rssi = rssi, freq = freq ?: 0, is2g = is2g,
+                lastSeenMs = System.currentTimeMillis()))
+            if (result.size >= limit) break
+        }
+        return result
+    }
+
+    /**
+     * Return currently-visible (in-range) networks with signal. Uses
+     * `dumpsys wifi` via root and parses out the `Wi-Fi:` entries. Falls
+     * back to an empty list if dumpsys is gated. ~280 ms typical.
+     */
+    fun scanVisibleNetworks(): List<VisibleNetwork> {
+        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
+        if (!r.isSuccess() || r.output.isBlank()) return emptyList()
+        return parseVisibleNetworks(r.output)
+    }
+
+    /**
+     * Return the network the OS reports as currently linked, with
+     * RSSI pulled from the latest dumpsys. Returns null if not
+     * connected to Wi-Fi.
+     *
+     * Approach: dumpsys reports one big line `mWifiInfo SSID: "...",
+     * BSSID = ..., RSSI = ..., supplicant state: COMPLETED, ...`. We
+     * grab SSID + BSSID + RSSI from there; the freqs are on a
+     * separate line but we don't need them for the link-state card.
+     */
+    fun getConnectedNetwork(): VisibleNetwork? {
+        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
+        if (!r.isSuccess() || r.output.isBlank()) return null
+        for (line in r.output.lines()) {
+            val t = line.trim()
+            if (!t.startsWith("mWifiInfo SSID")) continue
+            val ssid = Regex("""SSID:\s*\"([^\"]*)\"""").find(t)?.groupValues?.getOrNull(1)
+            val bssid = Regex("""BSSID:\s*([0-9a-fA-F:]{17})""").find(t)?.groupValues?.getOrNull(1)
+            val rssi = Regex("""RSSI:\s*(-?\d+)""").find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val freq = Regex("""(?:freq|frequency)\s*=\s*(\d+)""").find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            if (ssid.isNullOrBlank() || bssid.isNullOrBlank()) return null
+            val ssidClean = cleanSsid(ssid)
+            return VisibleNetwork(
+                ssid = ssidClean,
+                bssid = bssid,
+                rssi = rssi ?: -127,
+                freq = freq ?: 0,
+                is2g = freq != null && freq in 2400..2500,
+                lastSeenMs = System.currentTimeMillis()
+            )
+        }
+        return null
+    }
+
+    /**
+     * Merge saved networks + visible networks + currently-connected
+     * network into a single ordered list. The adapter then renders
+     * section headers as it walks the list.
+     *
+     * Ordering:
+     *   1. currently connected (signal bar count desc)
+     *   2. saved networks not currently visible (alphabetical, trusted first)
+     *   3. available (in-range but not saved) (signal desc)
+     *
+     * Caller should also pass through the saved set so trusted rows
+     * can be styled differently. The [isSaved] / [isConnected]
+     * fields drive the badges.
+     */
+    fun mergeForDisplay(
+        saved: List<SavedWifi>,
+        visible: List<VisibleNetwork>,
+        connected: VisibleNetwork?
+    ): List<SavedWifi> {
+        val visibleBySsid = visible.associateBy { it.ssid }
+        val result = mutableListOf<SavedWifi>()
+        // 1. Current
+        if (connected != null) {
+            val savedMatch = saved.firstOrNull { it.ssid == connected.ssid }
+            result.add(SavedWifi(
+                ssid = connected.ssid,
+                bssid = connected.bssid,
+                security = savedMatch?.security ?: "Unknown",
+                signalDbm = connected.rssi,
+                isConnected = true,
+                isSaved = savedMatch?.isSaved ?: true,
+                lastSeenMs = connected.lastSeenMs,
+                is2g = connected.is2g
+            ))
+        }
+        // 2. Saved (skip if currently connected — it's already #1)
+        val connectedSsid = connected?.ssid
+        for (s in saved) {
+            if (s.ssid == connectedSsid) continue
+            val v = visibleBySsid[s.ssid]
+            result.add(s.copy(
+                signalDbm = v?.rssi ?: -127,
+                lastSeenMs = v?.lastSeenMs ?: -1L,
+                is2g = v?.is2g ?: true
+            ))
+        }
+        // 3. Visible-not-saved (skip if currently connected)
+        for (v in visible) {
+            if (v.ssid == connectedSsid) continue
+            if (saved.any { it.ssid == v.ssid }) continue
+            result.add(SavedWifi(
+                ssid = v.ssid,
+                bssid = v.bssid,
+                security = "Unknown",
+                signalDbm = v.rssi,
+                isConnected = false,
+                isSaved = false,
+                lastSeenMs = v.lastSeenMs,
+                is2g = v.is2g
+            ))
+        }
+        return result
+    }
+
     fun getSavedNetworks(context: Context): List<SavedWifi> {
         Log.d(TAG, "getSavedNetworks: rootAvailable=" + ShellUtils.hasRoot() + " contextNull=" + (context == null))
         // On modern Android the saved-network XML store at

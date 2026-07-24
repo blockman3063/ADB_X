@@ -17,7 +17,9 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import top.cbug.adbx.R
 import top.cbug.adbx.store.Settings as AppSettings
+import top.cbug.adbx.util.SavedWifi
 import top.cbug.adbx.util.WifiHelper
+import top.cbug.adbx.util.WifiSection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,7 +42,12 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
 
     private val bgScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val adapter = WifiAdapter()
-    private var allItems: List<WifiItem> = emptyList()
+    // Snapshot of the most-recent merged network list (current +
+    // saved + available). Wi-Fi items have mutable signal-dBm and
+    // connection flags that the wifi scan refresh writes; we keep
+    // a copy here so the search box can re-filter without re-running
+    // a dumpsys probe on every keystroke.
+    private var allItems: List<SavedWifi> = emptyList()
     private var sortMode: Int = AppSettings.wifiSortMode
     private var lastQuery: String = ""
 
@@ -85,14 +92,11 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
         adapter.onToggleTrusted = { ssid, trusted ->
             if (trusted) AppSettings.addTrusted(ssid) else AppSettings.removeTrusted(ssid)
             AppSettings.save(this)
-            // Re-sort so trusted jumps to top.
+            // The user just toggled "trusted" — immediately re-evaluate
+            // the auto-toggle path so we don't have to wait for the next
+            // NETWORK_STATE_CHANGED (which may not fire for many minutes
+            // if the user keeps the device still).
             applyFilterAndSort()
-            // The user just toggled "trusted" — if the currently
-            // connected SSID is the one we just trusted, immediately
-            // re-evaluate and enable wireless ADB instead of waiting
-            // for the next NETWORK_STATE_CHANGED. fireOnce is a
-            // no-op background broadcast (goAsync, 10s budget), so
-            // calling it from the main thread here is safe and fast.
             if (trusted) {
                 top.cbug.adbx.WifiStateReceiver.fireOnce(this)
             }
@@ -139,8 +143,21 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun refresh() {
         bgScope.launch {
             try {
-                val networks = WifiHelper.getSavedNetworks(this@WifiSettingsActivity)
-                allItems = networks.map { WifiItem(it.ssid, it.bssid, it.security) }
+                // Pull three independent views of the wifi world and
+                // merge them into a single ordered list. The saved
+                // profile list comes from the config store (the app
+                // uid cannot read it directly; we route through cmd
+                // wifi / dumpsys / sysfs). The visible scan comes from
+                // dumpsys wifi so we can show in-range networks that
+                // the user has not yet configured. The current interface
+                // comes from the same dumpsys but is parsed separately
+                // because it carries live RSSI rather than a scan-time
+                // snapshot.
+                val saved = WifiHelper.getSavedNetworks(this@WifiSettingsActivity)
+                val visible = WifiHelper.scanVisibleNetworks()
+                val connected = WifiHelper.getConnectedNetwork()
+                val merged = WifiHelper.mergeForDisplay(saved, visible, connected)
+                allItems = merged
                 withContext(Dispatchers.Main) { applyFilterAndSort() }
             } catch (t: Throwable) {
                 android.util.Log.w("ADB_X_WifiSet", "refresh failed: ${t.message}")
@@ -149,24 +166,52 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
     }
 
     /**
-     * Apply the current query + sort mode to the cached allItems and update
-     * the adapter. Runs on the main thread.
+     * Apply the current query + sort mode, splitting by section, and
+     * emit rows the adapter can render as a heterogeneous list. Order
+     * is:
+     *   - Connected (if any) — signal desc within
+     *   - Saved networks — trusted first, then alphabetical
+     *   - Other networks (visible but not saved) — signal desc
+     * Each section starts with a [Row.Section] header.
      */
     private fun applyFilterAndSort() {
         val q = lastQuery.trim().lowercase()
-        val filtered = if (q.isEmpty()) allItems
-        else allItems.filter {
-            it.ssid.lowercase().contains(q) ||
-            it.security.lowercase().contains(q)
+        val matches = { w: SavedWifi ->
+            q.isEmpty() ||
+                w.ssid.lowercase().contains(q) ||
+                w.security.lowercase().contains(q)
         }
-        val sorted = when (sortMode) {
-            2 -> filtered.sortedByDescending { it.security.length + it.ssid.length }  // crude "signal" proxy
-            3 -> filtered.sortedByDescending { it.ssid }                            // crude "recent" proxy
-            else -> filtered.sortedBy { it.ssid.lowercase() }
+        val current = allItems.firstOrNull { it.isConnected }
+        val saved = allItems.filter { it.isSaved && it != current && matches(it) }
+            .sortedWith(
+                compareByDescending<SavedWifi> { AppSettings.isTrusted(it.ssid) }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.ssid }
+            )
+        val available = allItems.filter { !it.isSaved && matches(it) }
+            .sortedByDescending { if (it.signalDbm <= -127) -999 else it.signalDbm }
+        // Sort dropdown: when user picks "Signal", flip the saved
+        // section to signal-desc as well so the toggle does something.
+        val savedFinal = if (sortMode == 2)
+            saved.sortedByDescending { if (it.signalDbm <= -127) -999 else it.signalDbm }
+        else saved
+
+        val rows = mutableListOf<WifiAdapter.Row>()
+        if (current != null) {
+            rows.add(WifiAdapter.Row.Section(WifiSection.CURRENT))
+            rows.add(WifiAdapter.Row.Network(current))
         }
-        adapter.update(sorted)
+        if (savedFinal.isNotEmpty()) {
+            rows.add(WifiAdapter.Row.Section(WifiSection.SAVED))
+            for (w in savedFinal) rows.add(WifiAdapter.Row.Network(w))
+        }
+        if (available.isNotEmpty()) {
+            rows.add(WifiAdapter.Row.Section(WifiSection.AVAILABLE))
+            for (w in available) rows.add(WifiAdapter.Row.Network(w))
+        }
+        adapter.update(rows)
+
         val total = allItems.size
-        val shown = sorted.size
+        val shown = rows.count { it is WifiAdapter.Row.Network }
         tvFilterSummary.text = getString(R.string.wifi_summary_fmt, shown, total)
         tvEmpty.visibility = if (shown == 0) View.VISIBLE else View.GONE
     }

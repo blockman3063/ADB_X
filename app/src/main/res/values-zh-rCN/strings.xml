@@ -6,7 +6,8 @@
     <!-- Bottom navigation -->
     <string name="nav_status">状态</string>
     <string name="nav_port">端口</string>
-    <string name="nav_networks">网络</string>
+    <string name="nav_wireless">无线</string>
+    <string name="nav_wired">有线</string>
     <string name="nav_settings">设置</string>
 
     <!-- Xposed framework status card -->
@@ -111,7 +112,16 @@
     <string name="dialog_xposed_refresh">刷新</string>
     <string name="msg_no_networks_root">未找到已保存的网络。\n请尝试:su -c \'cmd wifi list-networks\'\nRoot 可用但无输出。</string>
     <string name="msg_no_networks_noroot">未找到已保存的网络。\n无 Root 权限。\n请授予位置权限后重试。</string>
-    <string name="lang_system">跟随系统</string>
+        <string name="wifi_section_current">已连接</string>
+    <string name="wifi_section_saved">已保存的网络</string>
+    <string name="wifi_section_available">其他网络</string>
+    <string name="wifi_signal_unknown">无信号</string>
+    <string name="wifi_connect_btn">连接</string>
+    <string name="wifi_forget_btn">忘记</string>
+    <string name="wifi_security_open">开放</string>
+    <string name="wifi_connected_badge">已连接</string>
+    <string name="wifi_saved_badge">已保存</string>
+<string name="lang_system">跟随系统</string>
     <string name="lang_english">English</string>
     <string name="lang_chinese">中文</string>
     <string name="about_version">版本</string>
@@ -136,4 +146,25 @@
     <string name="trusted_wifi_notif_title">ADB_X 自动开关运行中</string>
     <string name="trusted_wifi_notif_text">监听当前 Wi-Fi,自动切换无线调试</string>
     <string name="pairing_trigger_now">立即触发配对对话框</string>
+
+    <!-- Wired (USB) device auto-toggle card -->
+    <string name="section_wired">有线 USB</string>
+    <string name="wired_status_no_devices">未连接 USB 设备</string>
+    <string name="wired_status_devices_untrusted">已连接 %1$d 个设备 · 均未受信任</string>
+    <string name="wired_status_device_trusted">设备 %1$s 已受信任 · 自动开关已开启</string>
+    <string name="wired_status_disabled">自动开关未开启</string>
+    <string name="wired_device_label">厂商 %1$s · 产品 %2$s</string>
+    <string name="wired_device_serial_unknown">未知序列号</string>
+    <string name="wired_action_trust">信任此设备</string>
+    <string name="wired_action_untrust">取消信任</string>
+    <string name="wired_action_trusted">已信任</string>
+    <string name="wired_help">连接你信任的 USB 设备时,应用记住其序列号并自动开关 USB ADB。打开你想用的开关后,点"信任"。</string>
+    <string name="wired_auto_enable_summary">受信任设备连接时自动开启 ADB</string>
+    <string name="wired_auto_disable_summary">没有受信任设备时自动关闭 ADB</string>
+    <string name="wired_section_devices">已连接设备</string>
+    <string name="wired_action_toggle_on">立即开启 ADB</string>
+    <string name="wired_action_toggle_off">立即关闭 ADB</string>
+    <string name="wired_usb_state_on">USB 调试已开启</string>
+    <string name="wired_usb_state_off">USB 调试已关闭</string>
+    <string name="wired_toggle_failed">USB ADB 切换失败(需要 root)</string>
 </resources>

@@ -76,9 +76,7 @@
                <action android:name="android.net.wifi.NETWORK_STATE_CHANGED" />
                <action android:name="top.cbug.adbx.action.WIFI_EVAL" />
            </intent-filter>
-       </receiver>
-
-        <meta-data
+       </receiver><meta-data
             android:name="xposedmodule"
             android:value="true" />
         <meta-data

@@ -13,7 +13,8 @@
     <!-- Bottom navigation -->
     <string name="nav_status">Status</string>
     <string name="nav_port">Port</string>
-    <string name="nav_networks">Networks</string>
+    <string name="nav_wireless">Wireless</string>
+    <string name="nav_wired">Wired</string>
     <string name="nav_settings">Settings</string>
 
     <!-- Xposed framework status card -->
@@ -118,7 +119,16 @@
     <string name="dialog_xposed_refresh">Refresh</string>
     <string name="msg_no_networks_root">No saved networks found via root.\nTry: su -c \'cmd wifi list-networks\'\nRoot available but no output.</string>
     <string name="msg_no_networks_noroot">No saved networks found.\nNo root access.\nGrant location permissions and try again.</string>
-    <string name="lang_system">Follow system</string>
+        <string name="wifi_section_current">Connected</string>
+    <string name="wifi_section_saved">Saved networks</string>
+    <string name="wifi_section_available">Other networks</string>
+    <string name="wifi_signal_unknown">No signal</string>
+    <string name="wifi_connect_btn">Connect</string>
+    <string name="wifi_forget_btn">Forget</string>
+    <string name="wifi_security_open">Open</string>
+    <string name="wifi_connected_badge">Connected</string>
+    <string name="wifi_saved_badge">Saved</string>
+<string name="lang_system">Follow system</string>
     <string name="lang_english">English</string>
     <string name="lang_chinese">中文</string>
     <string name="about_version">Version</string>
@@ -143,4 +153,25 @@
     <string name="trusted_wifi_notif_title">ADB_X auto-toggle running</string>
     <string name="trusted_wifi_notif_text">Watching the connected Wi-Fi to toggle wireless ADB</string>
     <string name="pairing_trigger_now">Trigger pairing dialog</string>
+
+    <!-- Wired (USB) device auto-toggle card -->
+    <string name="section_wired">Wired USB</string>
+    <string name="wired_status_no_devices">No USB device connected</string>
+    <string name="wired_status_devices_untrusted">%1$d device(s) connected · none trusted</string>
+    <string name="wired_status_device_trusted">Device %1$s trusted · auto-toggle armed</string>
+    <string name="wired_status_disabled">Auto-toggle off</string>
+    <string name="wired_device_label">Vendor %1$s · Product %2$s</string>
+    <string name="wired_device_serial_unknown">Unknown serial</string>
+    <string name="wired_action_trust">Trust this device</string>
+    <string name="wired_action_untrust">Untrust</string>
+    <string name="wired_action_trusted">Trusted</string>
+    <string name="wired_help">When you connect a USB device you trust, the app remembers its serial and toggles USB ADB automatically. Toggle what you want, then tap Trust.</string>
+    <string name="wired_auto_enable_summary">Auto-enable ADB on trusted devices</string>
+    <string name="wired_auto_disable_summary">Auto-disable ADB when no trusted device is connected</string>
+    <string name="wired_section_devices">Connected devices</string>
+    <string name="wired_action_toggle_on">Enable ADB now</string>
+    <string name="wired_action_toggle_off">Disable ADB now</string>
+    <string name="wired_usb_state_on">ADB over USB is enabled</string>
+    <string name="wired_usb_state_off">ADB over USB is disabled</string>
+    <string name="wired_toggle_failed">USB ADB toggle failed (need root)</string>
 </resources>
