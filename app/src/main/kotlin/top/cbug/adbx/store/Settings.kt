@@ -7,7 +7,7 @@ import kotlin.concurrent.thread
 
 object Settings {
     private const val PREFS_NAME = "adb_x_settings"
-    private const val SYNC_CONFIG_FILE = "/data/local/tmp/adb_x_config.txt"
+    private const val SYNC_CONFIG_FILE = "/data/system/adb_x_config.txt"
 
     private const val KEY_FIXED_PORT_ENABLED = "fixed_port_enabled"
     private const val KEY_FIXED_PORT = "fixed_port"

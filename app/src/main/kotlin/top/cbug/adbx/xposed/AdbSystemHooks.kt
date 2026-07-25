@@ -19,14 +19,14 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * System_server hooks — all ADB management logic lives here.
  *
- * App (UI only): writes config to /data/local/tmp/adb_x_config.txt
+ * App (UI only): writes config to /data/system/adb_x_config.txt
  * Hook: reads config on WiFi events + retry when file appears late.
  */
 object AdbSystemHooks {
 
     private const val TAG = "ADB_X_SystemHooks"
-    private const val CONFIG_PATH = "/data/local/tmp/adb_x_config.txt"
-    private const val SYNC_CONFIG_FILE = "/data/local/tmp/adb_x_config.txt"
+    private const val CONFIG_PATH = "/data/system/adb_x_config.txt"
+    private const val SYNC_CONFIG_FILE = "/data/system/adb_x_config.txt"
     private val registered = AtomicBoolean(false)
 
     /** SSID we already enabled ADB for — avoid re-enabling on every event. */
