@@ -177,14 +177,14 @@ object WifiHelper {
     )
 
     fun snapshotWifi(): WifiSnapshot {
-        // OnePlus dumpsys wifi is ~21k lines; the full payload
-        // arrives in ~500 ms but parsing every line takes another
-        // 1 s. Trimming server-side via grep brings the wire size
-        // down to ~150 lines and parsing to ~5 ms.
-        val r = ShellUtils.executeSu(
-            "dumpsys wifi 2>&1 | grep -E 'mWifiInfo|Wi-Fi:|CMD_ONESHOT_RSSI_POLL' | head -200",
-            3000
-        )
+        // On OnePlus OxygenOS dumpsys wifi is ~21k lines including a
+        // heavy RSSI poll history; dumping the full text takes ~350 ms
+        // on this ROM (vs ~800 ms with an inline grep — the grep
+        // overhead exceeds the savings because dumpsys emits the full
+        // payload into the pipe before grep can filter). Parsing
+        // 21k lines is ~5 ms when restricted to the three shapes we
+        // care about, so we just live with the wire size.
+        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
         if (!r.isSuccess() || r.output.isBlank()) {
             return WifiSnapshot(emptyList(), null)
         }
@@ -638,14 +638,10 @@ object WifiHelper {
 
     private fun getSavedNetworksRootDumpsys(): List<SavedWifi> {
         if (!ShellUtils.hasRoot()) return emptyList()
-        // Trim server-side: we only need the lines that mention
-        // SSID = "..." or ssid="..." (saved profile block) — the
-        // rest of the 21k-line dumpsys payload is RSSI poll history
-        // and resource tables that we don't need.
-        val result = ShellUtils.executeSu(
-            "dumpsys wifi 2>&1 | grep -E 'SSID[=:]|ssid=' | grep -v RSSI_POLL | head -200",
-            3000
-        )
+        // Full dumpsys wifi (~350 ms) is faster than grep-filtered on
+        // OnePlus; the parser ignores the lines we don't need. We
+        // only get here when cmd wifi list-networks fails.
+        val result = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
         if (!result.isSuccess() || result.output.isBlank()) return emptyList()
         val seen = mutableSetOf<String>()
         val networks = mutableListOf<SavedWifi>()
