@@ -72,5 +72,10 @@ class BootReceiver : BroadcastReceiver() {
                 Log.d(TAG, "Boot completed — no action (trusted=" + trusted + ")")
             }
         }
+        // Always start the persistent daemon so subsequent WiFi events
+        // (join / leave / BSSID change) are handled even when the user
+        // is not in the app. The service is idempotent — calling start
+        // on an already-running service is a no-op.
+        TrustedWifiService.start(context)
     }
 }

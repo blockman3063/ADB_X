@@ -116,6 +116,14 @@ class WifiStateReceiver : BroadcastReceiver() {
         /** Public entry — call from MainActivity.onResume to cover the
          *  cold-start case. */
         fun fireOnce(context: Context) {
+            // Make sure the foreground daemon is running so its
+            // NetworkCallback is the one watching WiFi state from
+            // here on. Without this the receiver path only runs while
+            // an app process is alive, which is too short for the
+            // user experience of "open app once, then it just works."
+            try {
+                top.cbug.adbx.TrustedWifiService.start(context)
+            } catch (_: Throwable) { }
             val intent = Intent(context, WifiStateReceiver::class.java)
                 .setAction(ACTION_INTERNAL_FIRE)
             context.sendBroadcast(intent)

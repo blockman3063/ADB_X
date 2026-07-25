@@ -45,5 +45,9 @@ class App : Application() {
         // registered by MainActivity when it becomes visible (Android
         // 14+ restricts background callbacks, so there is no point in
         // running the watcher when the UI is not in front).
+        // Bring up the persistent foreground daemon so the auto-toggle
+        // keeps firing after the user closes the UI. This is idempotent
+        // — calling start on an already-running service is a no-op.
+        TrustedWifiService.start(this)
     }
 }
