@@ -232,7 +232,7 @@ object AdbSystemHooks {
                 val content = sb.toString().replace("'", "'\\''")
                 val r = Runtime.getRuntime().exec(
                     arrayOf(
-                        "su", "0", "-c",
+                        "/system/bin/su", "0", "-c",
                         "(echo '$content' > /data/adb/lspd/config/adb_x_wifi_list " +
                         "&& chmod 666 /data/adb/lspd/config/adb_x_wifi_list) " +
                         "|| (echo '$content' > /data/local/tmp/adb_x_wifi_list " +
