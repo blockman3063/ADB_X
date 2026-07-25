@@ -26,6 +26,7 @@ object AdbSystemHooks {
 
     private const val TAG = "ADB_X_SystemHooks"
     private const val CONFIG_PATH = "/data/local/tmp/adb_x_config.txt"
+    private const val SYNC_CONFIG_FILE = "/data/local/tmp/adb_x_config.txt"
     private val registered = AtomicBoolean(false)
 
     /** SSID we already enabled ADB for — avoid re-enabling on every event. */
@@ -518,19 +519,46 @@ object AdbSystemHooks {
         val fixedPort: Int = 5555,
         val trustedSsids: Set<String> = emptySet()
     )
-
     private fun readConfig(): AdbConfig {
-        val file = File(CONFIG_PATH)
-        val exists = file.exists()
-        val canRead = try { file.canRead() } catch (_: Throwable) { false }
-        val absPath = try { file.absolutePath } catch (_: Throwable) { "?" }
-        XposedInit.log("[$TAG] readConfig path=$absPath exists=$exists canRead=$canRead")
-        if (!exists || !canRead) return AdbConfig()
+        // Primary path: Settings.Global. The app writes the trust
+        // set to Settings.Global on every config save, so the hook
+        // can read it via the same provider the system uses
+        // internally — no file permission dance required.
+        try {
+            val cls = android.provider.Settings.Global::class.java
+            val gStr = cls.getMethod("getString",
+                android.content.ContentResolver::class.java,
+                String::class.java,
+                String::class.java)
+            val gInt = cls.getMethod("getInt",
+                android.content.ContentResolver::class.java,
+                String::class.java,
+                Int::class.javaPrimitiveType)
+            val ctx = top.cbug.adbx.App.appContext
+            val r = ctx.contentResolver
+            val trustedCsv = gStr.invoke(null, r, "adb_x_trusted_ssids", "") as String?
+            val autoEnable = (gInt.invoke(null, r, "adb_x_auto_enable", 1) as Int) == 1
+            val autoDisable = (gInt.invoke(null, r, "adb_x_auto_disable", 0) as Int) == 1
+            val fixedPortEnabled = (gInt.invoke(null, r, "adb_x_fixed_port_enabled", 0) as Int) == 1
+            val fixedPort = (gInt.invoke(null, r, "adb_x_fixed_port", 5555) as Int)
+            val trusted: Set<String> = if (trustedCsv.isNullOrBlank()) emptySet()
+                else trustedCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            return AdbConfig(
+                autoEnable = autoEnable,
+                autoDisable = autoDisable,
+                bootStart = true,
+                locale = "system",
+                fixedPortEnabled = fixedPortEnabled,
+                fixedPort = fixedPort,
+                trustedSsids = trusted
+            )
+        } catch (_: Throwable) { }
+        // Fallback: world-readable mirror in /data/local/tmp/.
+        val file = File(SYNC_CONFIG_FILE)
+        if (!file.exists() || !file.canRead()) return AdbConfig()
         return try {
-            val raw = file.readText()
-            XposedInit.log("[$TAG] readConfig raw (${raw.length}b): $raw")
             val map = mutableMapOf<String, String>()
-            for (line in raw.lines()) {
+            for (line in file.readLines()) {
                 val idx = line.trim().indexOf('=')
                 if (idx > 0) map[line.substring(0, idx).trim()] = line.substring(idx + 1).trim()
             }
@@ -544,10 +572,7 @@ object AdbSystemHooks {
                 trustedSsids = map.getOrDefault("trusted_ssids", "")
                     .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             )
-        } catch (t: Throwable) {
-            XposedInit.log("[$TAG] readConfig: ${t.message}")
-            AdbConfig()
-        }
+        } catch (_: Throwable) { AdbConfig() }
     }
 
     /**

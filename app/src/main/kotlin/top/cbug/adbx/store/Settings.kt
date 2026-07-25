@@ -139,9 +139,38 @@ object Settings {
     }
 
 
-    /** Sync settings to world-readable file for Xposed module fallback.
-     *  Runs on a background thread - do NOT call from main thread. */
+    /** Sync settings to Settings.Global so the LSPosed hook running in
+     *  com.android.settings (or system_server on AOSP) can read them
+     *  directly without going through a flat file. Falls back to the
+     *  /data/local/tmp mirror for the case where Settings.Global is
+     *  read-restricted on a heavily-customised ROM. Runs on a
+     *  background thread - do NOT call from main thread. */
     private fun syncConfigToFile() {
+        val ctx = top.cbug.adbx.App.appContext
+        try {
+            // Settings.Global is a Java class with static methods.
+            // Use reflection so we don't need a separate Java file.
+            val cls = android.provider.Settings.Global::class.java
+            val pStr = cls.getMethod("putString",
+                android.content.ContentResolver::class.java,
+                String::class.java,
+                String::class.java)
+            val pInt = cls.getMethod("putInt",
+                android.content.ContentResolver::class.java,
+                String::class.java,
+                Int::class.javaPrimitiveType)
+            val r = ctx.contentResolver
+            pStr.invoke(null, r, "adb_x_trusted_ssids", trustedSsids.joinToString(","))
+            pStr.invoke(null, r, "adb_x_trusted_usb_serials", trustedUsbSerials.joinToString(","))
+            pInt.invoke(null, r, "adb_x_fixed_port_enabled", if (fixedPortEnabled) 1 else 0)
+            pInt.invoke(null, r, "adb_x_fixed_port", fixedPort)
+            pInt.invoke(null, r, "adb_x_auto_enable", if (autoEnable) 1 else 0)
+            pInt.invoke(null, r, "adb_x_auto_disable", if (autoDisable) 1 else 0)
+        } catch (_: Throwable) { }
+        syncConfigToFileMirror()
+    }
+
+    private fun syncConfigToFileMirror() {
         val content = buildString {
             appendLine("fixed_port_enabled=" + fixedPortEnabled)
             appendLine("fixed_port=" + fixedPort)
