@@ -521,10 +521,16 @@ object AdbSystemHooks {
 
     private fun readConfig(): AdbConfig {
         val file = File(CONFIG_PATH)
-        if (!file.exists() || !file.canRead()) return AdbConfig()
+        val exists = file.exists()
+        val canRead = try { file.canRead() } catch (_: Throwable) { false }
+        val absPath = try { file.absolutePath } catch (_: Throwable) { "?" }
+        XposedInit.log("[$TAG] readConfig path=$absPath exists=$exists canRead=$canRead")
+        if (!exists || !canRead) return AdbConfig()
         return try {
+            val raw = file.readText()
+            XposedInit.log("[$TAG] readConfig raw (${raw.length}b): $raw")
             val map = mutableMapOf<String, String>()
-            for (line in file.readLines()) {
+            for (line in raw.lines()) {
                 val idx = line.trim().indexOf('=')
                 if (idx > 0) map[line.substring(0, idx).trim()] = line.substring(idx + 1).trim()
             }
