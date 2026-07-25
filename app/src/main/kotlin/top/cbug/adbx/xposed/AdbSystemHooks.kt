@@ -459,15 +459,19 @@ object AdbSystemHooks {
         handler.postDelayed({
             val ssid = try { wm.connectionInfo?.ssid?.trim()?.removeSurrounding("\"") ?: "" }
                         catch (_: Exception) { "" }
-            if (ssid.isBlank()) return@postDelayed
+            val cfg = readConfig()
+            XposedInit.log("[$TAG] retry #$attempt ssid='$ssid' trusted=${cfg.trustedSsids} auto=${cfg.autoEnable}")
+            if (ssid.isBlank()) {
+                retryConfig(handler, cm, wm, network, context)
+                return@postDelayed
+            }
             if (ssid == lastEnabledSsid) return@postDelayed
 
-            val config = readConfig()
-            if (config.autoEnable && ssid in config.trustedSsids) {
+            if (cfg.autoEnable && ssid in cfg.trustedSsids) {
                 XposedInit.log("[$TAG] Config appeared on retry #$attempt — enabling ADB")
                 lastEnabledSsid = ssid
                 retryCount.set(0)
-                enableAdb(context, config)
+                enableAdb(context, cfg)
             } else {
                 retryConfig(handler, cm, wm, network, context)
             }
@@ -476,8 +480,10 @@ object AdbSystemHooks {
 
     private fun enableAdb(context: Context, config: AdbConfig) {
         try {
+            val before = Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", -1)
             Settings.Global.putInt(context.contentResolver, "adb_wifi_enabled", 1)
-            XposedInit.log("[$TAG] adb_wifi_enabled=1 OK")
+            val after = Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", -1)
+            XposedInit.log("[$TAG] adb_wifi_enabled before=$before after=$after")
         } catch (t: Throwable) {
             XposedInit.log("[$TAG] Failed to enable ADB: ${t.message}")
         }
