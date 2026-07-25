@@ -158,7 +158,15 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
                 }
                 val saved = savedDeferred.await()
                 val snap = snapshotDeferred.await()
-                val merged = WifiHelper.mergeForDisplay(saved, snap.visible, snap.connected)
+                // If the dumpsys path failed (no su on this ROM,
+                // KSU app_policy denied, etc.) fall back to the
+                // public WifiManager API. The API does not give us
+                // signal strength but it does tell us which SSID
+                // is currently linked, so the "Currently connected"
+                // section can still render.
+                val connected = snap.connected
+                    ?: WifiHelper.getConnectedNetworkFromApi(this@WifiSettingsActivity)
+                val merged = WifiHelper.mergeForDisplay(saved, snap.visible, connected)
                 allItems = merged
                 withContext(Dispatchers.Main) { applyFilterAndSort() }
             } catch (t: Throwable) {

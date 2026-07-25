@@ -211,6 +211,37 @@ object WifiHelper {
     fun getConnectedNetwork(): VisibleNetwork? = snapshotWifi().connected
 
     /**
+     * Lightweight fallback that pulls the connected network via the
+     * public WifiManager API rather than dumpsys wifi. Used when
+     * su is not available (user toggled root off, KSU app_policy
+     * denies, OnePlus GMS mode, etc.) — returns the connected SSID
+     * with placeholder signal/freq so the wifi list still shows the
+     * "Currently connected" section. Lacks RSSI/freq because the
+     * public API only exposes the link layer after API 31+ and we
+     * don't want to ask for a runtime permission upgrade for this
+     * fallback.
+     */
+    @Suppress("DEPRECATION")
+    fun getConnectedNetworkFromApi(ctx: android.content.Context): VisibleNetwork? {
+        return try {
+            val wm = ctx.getSystemService(android.content.Context.WIFI_SERVICE)
+                as? android.net.wifi.WifiManager ?: return null
+            val info = wm.connectionInfo ?: return null
+            val ssid = cleanSsid(info.ssid)
+            if (ssid.isBlank()) return null
+            val bssid = info.bssid ?: "00:00:00:00:00:00"
+            VisibleNetwork(
+                ssid = ssid,
+                bssid = bssid,
+                rssi = -127,
+                freq = 0,
+                is2g = true,
+                lastSeenMs = System.currentTimeMillis()
+            )
+        } catch (_: Throwable) { null }
+    }
+
+    /**
      * Pure parser for the mWifiInfo line — exposed so [snapshotWifi]
      * can parse it without re-running dumpsys.
      */
