@@ -223,25 +223,25 @@ object AdbSystemHooks {
                       .append(bssid.replace("\"", "")).append('|')
                       .append("Secured").append('\n')
                 }
-                // system_file SELinux label only allows root/system_server to
-                // write under /data/adb/lspd/. system_app context gets
-                // EACCES. We shell out to su to dump the list there —
-                // the su process inherits the system_app label so it
-                // would also fail, so we use 'su 0' which has root
-                // context and bypasses SELinux via the kernel.
+                // OnePlus OxygenOS /data/adb/lspd/config/ is mode 0777 but the
+                // system_file SELinux label only permits root and
+                // system_server writes — system_app context gets EACCES.
+                // Shell out to /system/bin/su via Runtime.exec() — absolute
+                // path because system_app PATH does not include /system/bin/.
+                // We try the lspd path first (cleaner location for cache
+                // files) then fall back to /data/local/tmp/ which has
+                // shell_data_file label readable by app uid.
                 val content = sb.toString().replace("'", "'\\''")
                 val r = Runtime.getRuntime().exec(
                     arrayOf(
-                        "/system/bin/su", "0", "-c",
-                        "(echo '$content' > /data/adb/lspd/config/adb_x_wifi_list " +
-                        "&& chmod 666 /data/adb/lspd/config/adb_x_wifi_list) " +
-                        "|| (echo '$content' > /data/local/tmp/adb_x_wifi_list " +
-                        "&& chmod 666 /data/local/tmp/adb_x_wifi_list) " +
-                        "2>&1"
+                        "sh", "-c",
+                        "/system/bin/su 0 sh -c 'echo $content > /data/adb/lspd/config/adb_x_wifi_list && chmod 666 /data/adb/lspd/config/adb_x_wifi_list' 2>/dev/null || " +
+                        "/system/bin/su 0 sh -c 'echo $content > /data/local/tmp/adb_x_wifi_list && chmod 666 /data/local/tmp/adb_x_wifi_list' 2>/dev/null || " +
+                        "echo FAIL"
                     )
                 )
                 val exit = try { r.waitFor() } catch (_: Throwable) { -1 }
-                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks (su rc=" + exit + ")")
+                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks (sh rc=" + exit + ")")
             } catch (t: Throwable) {
                 XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
             }
