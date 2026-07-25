@@ -235,13 +235,14 @@ object AdbSystemHooks {
                 val r = Runtime.getRuntime().exec(
                     arrayOf(
                         "sh", "-c",
-                        "/system/bin/su 0 sh -c 'echo $content > /data/adb/lspd/config/adb_x_wifi_list && chmod 666 /data/adb/lspd/config/adb_x_wifi_list' 2>/dev/null || " +
-                        "/system/bin/su 0 sh -c 'echo $content > /data/local/tmp/adb_x_wifi_list && chmod 666 /data/local/tmp/adb_x_wifi_list' 2>/dev/null || " +
+                        "/system/bin/su 0 sh -c 'echo $content > /data/adb/lspd/config/adb_x_wifi_list && chmod 666 /data/adb/lspd/config/adb_x_wifi_list' || " +
+                        "/system/bin/su 0 sh -c 'echo $content > /data/local/tmp/adb_x_wifi_list && chmod 666 /data/local/tmp/adb_x_wifi_list' || " +
                         "echo FAIL"
                     )
                 )
                 val exit = try { r.waitFor() } catch (_: Throwable) { -1 }
-                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks (sh rc=" + exit + ")")
+                val out = r.inputStream.bufferedReader().readText()
+                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks (sh rc=" + exit + " out=\u0027" + out.take(60) + "\u0027)")
             } catch (t: Throwable) {
                 XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
             }
