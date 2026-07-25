@@ -223,6 +223,7 @@ object WifiHelper {
      */
     @Suppress("DEPRECATION")
     fun getConnectedNetworkFromApi(ctx: android.content.Context): VisibleNetwork? {
+        Log.d(TAG, "getConnectedNetworkFromApi: enter")
         return try {
             val wm = ctx.getSystemService(android.content.Context.WIFI_SERVICE)
                 as? android.net.wifi.WifiManager ?: return null
@@ -230,6 +231,7 @@ object WifiHelper {
             val ssid = cleanSsid(info.ssid)
             if (ssid.isBlank()) return null
             val bssid = info.bssid ?: "00:00:00:00:00:00"
+            Log.d(TAG, "getConnectedNetworkFromApi: returning $ssid")
             VisibleNetwork(
                 ssid = ssid,
                 bssid = bssid,
