@@ -223,10 +223,28 @@ object AdbSystemHooks {
                       .append(bssid.replace("\"", "")).append('|')
                       .append("Secured").append('\n')
                 }
-                val tmp = java.io.File("/data/system/adb_x_wifi_list")
-                tmp.writeText(sb.toString())
-                tmp.setReadable(true, false)
-                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks")
+                // /data/system/ is mode 0777 but the SELinux policy on OxygenOS
+                // restricts writes there to root only — system_app context
+                // gets EACCES. /data/adb/lspd/config/ is created by the
+                // LSPosed daemon (root) and is mode 0771 with SELinux
+                // system_file label, which system_app can read from; the
+                // LSPosed daemon additionally relaxes the policy for
+                // hooks to write here. As a last resort we fall back to
+                // /data/local/tmp/adb_x_wifi_list if the lspd path is
+                // not writable.
+                val primary = java.io.File("/data/adb/lspd/config/adb_x_wifi_list")
+                val fallback = java.io.File("/data/local/tmp/adb_x_wifi_list")
+                val target = try {
+                    primary.writeText(sb.toString())
+                    primary
+                } catch (first: Throwable) {
+                    try {
+                        fallback.writeText(sb.toString())
+                        fallback
+                    } catch (_: Throwable) { fallback }
+                }
+                target.setReadable(true, false)
+                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks to " + target.absolutePath)
             } catch (t: Throwable) {
                 XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
             }

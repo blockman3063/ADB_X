@@ -626,18 +626,34 @@ object WifiHelper {
      * are blocked by SELinux labels.
      */
     private fun getSavedNetworksFromHookFile(): List<SavedWifi> {
-        return try {
-            val file = java.io.File("/data/system/adb_x_wifi_list")
-            if (!file.exists() || !file.canRead()) return emptyList()
-            val lines = file.readLines()
-            lines.mapNotNull { line ->
-                val parts = line.split("|")
-                if (parts.size < 3) return@mapNotNull null
-                val ssid = parts[0].trim()
-                if (ssid.isBlank()) return@mapNotNull null
-                SavedWifi(ssid, parts[1].trim().ifBlank { null }, parts[2].trim())
-            }
-        } catch (_: Throwable) { emptyList() }
+        // Try the LSPosed-daemon-owned path first (system_file label,
+        // mode 0771 owned by lspd), then the app-tmpfs fallback.
+        // Each path uses a different SELinux label so we try both
+        // rather than guessing which one is readable on this ROM.
+        val candidates = listOf(
+            "/data/adb/lspd/config/adb_x_wifi_list",
+            "/data/system/adb_x_wifi_list",
+            "/data/local/tmp/adb_x_wifi_list",
+        )
+        for (path in candidates) {
+            val nets = try {
+                readHookFile(path)
+            } catch (_: Throwable) { emptyList() }
+            if (nets.isNotEmpty()) return nets
+        }
+        return emptyList()
+    }
+
+    private fun readHookFile(path: String): List<SavedWifi> {
+        val file = java.io.File(path)
+        if (!file.exists() || !file.canRead()) return emptyList()
+        return file.readLines().mapNotNull { line ->
+            val parts = line.split("|")
+            if (parts.size < 3) return@mapNotNull null
+            val ssid = parts[0].trim()
+            if (ssid.isBlank()) return@mapNotNull null
+            SavedWifi(ssid, parts[1].trim().ifBlank { null }, parts[2].trim())
+        }
     }
 
     private fun parseSecurity(config: WifiConfiguration): String {
