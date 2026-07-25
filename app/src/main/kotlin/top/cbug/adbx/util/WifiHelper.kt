@@ -177,6 +177,7 @@ object WifiHelper {
     )
 
     fun snapshotWifi(): WifiSnapshot {
+        Log.d(TAG, "snapshotWifi: starting dumpsys")
         // On OnePlus OxygenOS dumpsys wifi is ~21k lines including a
         // heavy RSSI poll history; dumping the full text takes ~350 ms
         // on this ROM (vs ~800 ms with an inline grep — the grep
@@ -184,7 +185,7 @@ object WifiHelper {
         // payload into the pipe before grep can filter). Parsing
         // 21k lines is ~5 ms when restricted to the three shapes we
         // care about, so we just live with the wire size.
-        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
+        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 8000)
         if (!r.isSuccess() || r.output.isBlank()) {
             return WifiSnapshot(emptyList(), null)
         }
