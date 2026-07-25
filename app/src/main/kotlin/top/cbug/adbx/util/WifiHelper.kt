@@ -216,7 +216,11 @@ object WifiHelper {
     private fun parseConnectedNetwork(dumpsysOutput: String): VisibleNetwork? {
         for (line in dumpsysOutput.lines()) {
             val t = line.trim()
-            if (!t.startsWith("mWifiInfo SSID")) continue
+            if (!t.startsWith("mWifiInfo SSID")) {
+                if (line.contains("mWifiInfo")) Log.d(TAG, "skip: '" + t.take(40) + "'")
+                continue
+            }
+            Log.d(TAG, "parseConnected: hit line len=" + t.length)
             val ssid = Regex("""SSID:\s*\"([^\"]*)\"""").find(t)?.groupValues?.getOrNull(1)
             val bssid = Regex("""BSSID:\s*([0-9a-fA-F:]{17})""").find(t)?.groupValues?.getOrNull(1)
             val rssi = Regex("""RSSI:\s*(-?\d+)""").find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()
