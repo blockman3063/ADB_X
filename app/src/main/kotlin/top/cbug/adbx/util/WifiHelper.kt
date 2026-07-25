@@ -611,12 +611,23 @@ object WifiHelper {
         return result
     }
 
-    /** Plain-text fallback used when getConfiguredNetworks returns 0 (Android 11+
-     *  privacy policy hides the full list from third-party apps). The LSPosed
-     *  system_server hook writes the list here on WiFi events. */
+    /**
+     * Plain-text fallback used when the saved-networks sources above
+     * return 0 (e.g. cmd wifi is permission-gated on Android 14, the
+     * SELinux-gated dumpsys path returns nothing, and the system_app
+     * WifiManager API hides most profiles behind the privacy policy).
+     *
+     * The LSPosed system_server hook has full WifiManager visibility,
+     * so it dumps a flat ssid|bssid|security list to
+     * /data/system/adb_x_wifi_list (system_data_file label — the
+     * untrusted_app SELinux context that we run in can read this).
+     * This is the slowest fallback path but it works on every ROM
+     * we've tested, including OnePlus where the XML and dumpsys paths
+     * are blocked by SELinux labels.
+     */
     private fun getSavedNetworksFromHookFile(): List<SavedWifi> {
         return try {
-            val file = java.io.File("/data/local/tmp/adb_x_wifi_list")
+            val file = java.io.File("/data/system/adb_x_wifi_list")
             if (!file.exists() || !file.canRead()) return emptyList()
             val lines = file.readLines()
             lines.mapNotNull { line ->

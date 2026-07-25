@@ -223,9 +223,9 @@ object AdbSystemHooks {
                       .append(bssid.replace("\"", "")).append('|')
                       .append("Secured").append('\n')
                 }
-                val tmp = java.io.File("/data/local/tmp/adb_x_wifi_list")
+                val tmp = java.io.File("/data/system/adb_x_wifi_list")
                 tmp.writeText(sb.toString())
-                java.io.File("/data/local/tmp/adb_x_wifi_list").setReadable(true, false)
+                tmp.setReadable(true, false)
                 XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks")
             } catch (t: Throwable) {
                 XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
