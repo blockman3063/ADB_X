@@ -61,8 +61,7 @@
     <string name="btn_enable_adb">Enable ADB</string>
     <string name="btn_disable_adb">Disable ADB</string>
     <string name="sw_auto_enable">Auto-enable on trusted WiFi</string>
-    <string name="sw_auto_disable">Auto-disable on disconnect</string>
-    <string name="sw_boot_start">Start on boot</string>
+    <string name="sw_boot_start">Auto-start on boot</string>
     <string name="wifi_settings_title">Wi-Fi settings</string>
     <string name="wifi_search_hint">Search networks</string>
     <string name="wifi_no_match">No matching networks</string>

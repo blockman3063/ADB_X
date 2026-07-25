@@ -55,8 +55,8 @@ class WifiStateReceiver : BroadcastReceiver() {
                 AppSettings.load(context)
             } catch (_: Throwable) { }
 
-            if (!AppSettings.autoEnable && !AppSettings.autoDisable) {
-                Log.d(TAG, "no auto-toggle rules armed, skip")
+            if (!AppSettings.autoEnable) {
+                Log.d(TAG, "auto-enable not armed, skip")
                 pending.finish()
                 return
             }
@@ -70,24 +70,12 @@ class WifiStateReceiver : BroadcastReceiver() {
             }
 
             val trusted = AppSettings.isTrusted(ssid)
-            val acted = when {
-                trusted && AppSettings.autoEnable -> {
-                    Log.i(TAG, "trusted SSID " + ssid + ", enabling wireless ADB")
-                    AdbHelper.enableWirelessAdb()
-                    true
-                }
-                !trusted && AppSettings.autoDisable -> {
-                    Log.i(TAG, "non-trusted SSID " + ssid + ", disabling wireless ADB")
-                    AdbHelper.disableWirelessAdb()
-                    true
-                }
-                else -> {
-                    Log.d(TAG, "no action (trusted=" + trusted + " autoEnable=" + AppSettings.autoEnable + " autoDisable=" + AppSettings.autoDisable + ")")
-                    false
-                }
-            }
-            if (acted) {
+            if (trusted) {
+                Log.i(TAG, "trusted SSID " + ssid + ", enabling wireless ADB")
+                AdbHelper.enableWirelessAdb()
                 recordLastTrigger(context, ssid)
+            } else {
+                Log.d(TAG, "non-trusted SSID " + ssid + ", leaving wireless ADB unchanged (Android handles disconnect)")
             }
         } catch (t: Throwable) {
             Log.w(TAG, "evaluate failed", t)

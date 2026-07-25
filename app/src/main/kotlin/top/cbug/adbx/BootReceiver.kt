@@ -44,8 +44,8 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        if (!Settings.autoEnable && !Settings.autoDisable) {
-            Log.d(TAG, "Boot completed — no auto-toggle rules armed, skipping")
+        if (!Settings.autoEnable) {
+            Log.d(TAG, "Boot completed — auto-enable disabled, skipping")
             return
         }
 
@@ -57,20 +57,12 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         val trusted = Settings.isTrusted(ssid)
-        when {
-            trusted && Settings.autoEnable -> {
-                Log.i(TAG, "Boot completed — trusted SSID " + ssid + ", enabling wireless ADB")
-                AdbHelper.enableWirelessAdb()
-                WifiStateReceiver.recordLastTriggerFromBoot(context, ssid)
-            }
-            !trusted && Settings.autoDisable -> {
-                Log.i(TAG, "Boot completed — non-trusted SSID " + ssid + ", disabling wireless ADB")
-                AdbHelper.disableWirelessAdb()
-                WifiStateReceiver.recordLastTriggerFromBoot(context, ssid)
-            }
-            else -> {
-                Log.d(TAG, "Boot completed — no action (trusted=" + trusted + ")")
-            }
+        if (trusted) {
+            Log.i(TAG, "Boot completed — trusted SSID " + ssid + ", enabling wireless ADB")
+            AdbHelper.enableWirelessAdb()
+            WifiStateReceiver.recordLastTriggerFromBoot(context, ssid)
+        } else {
+            Log.d(TAG, "Boot completed — non-trusted SSID " + ssid + ", leaving wireless ADB unchanged (Android handles disconnect)")
         }
         // Always start the persistent daemon so subsequent WiFi events
         // (join / leave / BSSID change) are handled even when the user

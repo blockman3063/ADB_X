@@ -32,7 +32,10 @@ import top.cbug.adbx.util.WifiHelper
  *      whenever the active WiFi network comes up, goes down, or
  *      changes BSSID.
  *   2. Re-evaluate the trusted-SSID list against the current SSID.
- *   3. Call AdbHelper.enableWirelessAdb() / disableWirelessAdb().
+ *   3. Call AdbHelper.enableWirelessAdb() on trusted-SSID join.
+ *      On Wi-Fi loss we deliberately do NOT disable ADB — Android's
+ *      own adbd keeps the wireless endpoint alive across SSID
+ *      transitions, and the user can keep their session.
  *   4. Mirror last-action state to SharedPreferences so the Status
  *      tab can render it on next open.
  *

@@ -20,7 +20,6 @@ import top.cbug.adbx.store.Settings as AppSettings
 class SettingsFragment : Fragment() {
 
     private lateinit var swAutoEnable: MaterialSwitch
-    private lateinit var swAutoDisable: MaterialSwitch
     private lateinit var swBootStart: MaterialSwitch
     private lateinit var cardLanguage: MaterialCardView
     private lateinit var tvLanguageSub: TextView
@@ -34,7 +33,6 @@ class SettingsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         swAutoEnable    = view.findViewById(R.id.swAutoEnable)
-        swAutoDisable   = view.findViewById(R.id.swAutoDisable)
         swBootStart     = view.findViewById(R.id.swBootStart)
         cardLanguage    = view.findViewById(R.id.cardLanguage)
         tvLanguageSub   = view.findViewById(R.id.tvLanguageSub)
@@ -43,15 +41,10 @@ class SettingsFragment : Fragment() {
 
         AppSettings.load(requireContext())
         swAutoEnable.isChecked = AppSettings.autoEnable
-        swAutoDisable.isChecked = AppSettings.autoDisable
         swBootStart.isChecked = AppSettings.bootStart
 
         swAutoEnable.setOnCheckedChangeListener { _, c ->
             AppSettings.autoEnable = c
-            AppSettings.save(requireContext())
-        }
-        swAutoDisable.setOnCheckedChangeListener { _, c ->
-            AppSettings.autoDisable = c
             AppSettings.save(requireContext())
         }
         swBootStart.setOnCheckedChangeListener { _, c ->

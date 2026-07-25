@@ -280,7 +280,7 @@ class StatusFragment : Fragment() {
      */
     private fun renderTrustedWifi(currentSsid: String) {
         val settings = top.cbug.adbx.store.Settings
-        val armed = settings.autoEnable || settings.autoDisable
+        val armed = settings.autoEnable
         val ssidDisplay = if (currentSsid.isBlank()) "—" else currentSsid
         if (!armed) {
             tvTrustedWifiSubtitle.text = getString(R.string.trusted_wifi_status_not_armed)
@@ -302,14 +302,7 @@ class StatusFragment : Fragment() {
         }
         val subtitle = when {
             settings.trustedSet().isEmpty() -> getString(R.string.trusted_wifi_status_no_ssids)
-            currentSsid.isBlank() -> {
-                val what = when {
-                    settings.autoEnable && settings.autoDisable -> getString(R.string.sw_auto_enable) + " + " + getString(R.string.sw_auto_disable)
-                    settings.autoEnable -> getString(R.string.sw_auto_enable)
-                    else -> getString(R.string.sw_auto_disable)
-                }
-                getString(R.string.trusted_wifi_status_disabled) + " · " + what
-            }
+            currentSsid.isBlank() -> getString(R.string.trusted_wifi_status_disabled) + " · " + getString(R.string.sw_auto_enable)
             settings.isTrusted(currentSsid) -> getString(R.string.trusted_wifi_status_armed, ssidDisplay, getString(R.string.trusted_wifi_trusted))
             else -> getString(R.string.trusted_wifi_status_armed, ssidDisplay, getString(R.string.trusted_wifi_untrusted))
         }

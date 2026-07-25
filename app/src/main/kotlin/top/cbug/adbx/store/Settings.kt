@@ -13,7 +13,6 @@ object Settings {
     private const val KEY_FIXED_PORT = "fixed_port"
     private const val KEY_TRUSTED_SSIDS = "trusted_ssids"
     private const val KEY_AUTO_ENABLE = "auto_enable"
-    private const val KEY_AUTO_DISABLE = "auto_disable"
     private const val KEY_BOOT_START = "boot_start"
     private const val KEY_LOCALE = "locale"
     private const val KEY_WIFI_SORT = "wifi_sort"
@@ -27,13 +26,12 @@ object Settings {
     @Volatile var fixedPortEnabled = false
     @Volatile var fixedPort = 5555
     @Volatile var autoEnable = true
-    @Volatile var autoDisable = false
     @Volatile var bootStart = true
     @Volatile var locale: String = "system"
     @Volatile var wifiSortMode: Int = 1   // "system" | "en" | "zh"
     // Wired-USB auto-toggle. Defaults mirror wireless: arm on
-    // (autoEnable=true) but leave autoDisable off (you don't usually
-    // want ADB turning off when you unplug).
+    // (wiredAutoEnable=true) but leave wiredAutoDisable off (you don't
+    // usually want ADB turning off when you unplug).
     @Volatile var wiredAutoEnable = true
     @Volatile var wiredAutoDisable = false
     @Volatile var usbAdbEnabled = false
@@ -50,7 +48,6 @@ object Settings {
         fixedPortEnabled = p.getBoolean(KEY_FIXED_PORT_ENABLED, false)
         fixedPort = p.getInt(KEY_FIXED_PORT, 5555)
         autoEnable = p.getBoolean(KEY_AUTO_ENABLE, true)
-        autoDisable = p.getBoolean(KEY_AUTO_DISABLE, false)
         bootStart = p.getBoolean(KEY_BOOT_START, true)
         locale = p.getString(KEY_LOCALE, "system") ?: "system"
         wifiSortMode = p.getInt(KEY_WIFI_SORT, 1)
@@ -122,7 +119,6 @@ object Settings {
             .putBoolean(KEY_FIXED_PORT_ENABLED, fixedPortEnabled)
             .putInt(KEY_FIXED_PORT, fixedPort)
             .putBoolean(KEY_AUTO_ENABLE, autoEnable)
-            .putBoolean(KEY_AUTO_DISABLE, autoDisable)
             .putBoolean(KEY_BOOT_START, bootStart)
             .putString(KEY_LOCALE, locale)
             .putInt(KEY_WIFI_SORT, wifiSortMode)
@@ -147,26 +143,11 @@ object Settings {
      *  background thread - do NOT call from main thread. */
     private fun syncConfigToFile() {
         val ctx = top.cbug.adbx.App.appContext
-        try {
-            // Settings.Global is a Java class with static methods.
-            // Use reflection so we don't need a separate Java file.
-            val cls = android.provider.Settings.Global::class.java
-            val pStr = cls.getMethod("putString",
-                android.content.ContentResolver::class.java,
-                String::class.java,
-                String::class.java)
-            val pInt = cls.getMethod("putInt",
-                android.content.ContentResolver::class.java,
-                String::class.java,
-                Int::class.javaPrimitiveType)
-            val r = ctx.contentResolver
-            pStr.invoke(null, r, "adb_x_trusted_ssids", trustedSsids.joinToString(","))
-            pStr.invoke(null, r, "adb_x_trusted_usb_serials", trustedUsbSerials.joinToString(","))
-            pInt.invoke(null, r, "adb_x_fixed_port_enabled", if (fixedPortEnabled) 1 else 0)
-            pInt.invoke(null, r, "adb_x_fixed_port", fixedPort)
-            pInt.invoke(null, r, "adb_x_auto_enable", if (autoEnable) 1 else 0)
-            pInt.invoke(null, r, "adb_x_auto_disable", if (autoDisable) 1 else 0)
-        } catch (_: Throwable) { }
+        // Settings.Global requires WRITE_SECURE_SETTINGS, which we
+        // cannot grant as a third-party APK. Skip that path entirely
+        // and rely on the world-readable mirror — but write it to
+        // /data/local/tmp which is the only path we can touch from
+        // app uid without going through su.
         syncConfigToFileMirror()
     }
 
@@ -175,7 +156,6 @@ object Settings {
             appendLine("fixed_port_enabled=" + fixedPortEnabled)
             appendLine("fixed_port=" + fixedPort)
             appendLine("auto_enable=" + autoEnable)
-            appendLine("auto_disable=" + autoDisable)
             appendLine("boot_start=" + bootStart)
             appendLine("locale=" + locale)
             appendLine("wifi_sort=" + wifiSortMode)
@@ -195,9 +175,19 @@ object Settings {
             } catch (_: Exception) {
                 // Need root to write to /data/local/tmp
             }
-            // Fallback via su
+            // Fallback via su. We also have to fix the SELinux label
+            // — files created by shell in /data/local/tmp inherit the
+            // `shell_data_file` context, which the com.android.settings
+            // process cannot read. chcon to `system_data_file` so the
+            // hook running in settings has read access.
+            val escaped = content.replace("'", "'\\''")
             top.cbug.adbx.util.ShellUtils.executeSu(
-                "echo '" + content.replace("'", "'\\''") + "' > " + SYNC_CONFIG_FILE + " && chmod 644 " + SYNC_CONFIG_FILE, 3000)
+                "(echo '" + escaped + "' > " + SYNC_CONFIG_FILE +
+                "; chmod 644 " + SYNC_CONFIG_FILE +
+                "; chcon u:object_r:system_data_file:s0 " + SYNC_CONFIG_FILE +
+                " || chcon system_data_file " + SYNC_CONFIG_FILE + ") 2>&1",
+                3000
+            )
         } catch (_: Exception) { }
     }
 

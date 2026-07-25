@@ -54,7 +54,6 @@
     <string name="btn_enable_adb">开启 ADB</string>
     <string name="btn_disable_adb">关闭 ADB</string>
     <string name="sw_auto_enable">连接信任 WiFi 时自动开启</string>
-    <string name="sw_auto_disable">离开时自动关闭</string>
     <string name="sw_boot_start">开机自启动</string>
     <string name="wifi_settings_title">Wi-Fi 设置</string>
     <string name="wifi_search_hint">搜索网络</string>

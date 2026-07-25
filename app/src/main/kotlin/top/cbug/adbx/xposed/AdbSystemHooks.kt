@@ -183,15 +183,17 @@ object AdbSystemHooks {
                     handleWifiEvent(cm, wm, network, context, handler)
                 }
                 override fun onLost(network: Network) {
+                    // WiFi loss: do nothing on the ADB side. Android's
+                    // own adbd keeps the wireless endpoint alive across
+                    // SSID transitions and the user can keep their
+                    // session. Forgetting to call disable here also
+                    // avoids a race where we disable ADB while the user
+                    // is about to reconnect to a different trusted SSID.
                     val caps = cm.getNetworkCapabilities(network)
                     if (caps == null || !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return
                     lastEnabledSsid = ""
                     retryCount.set(0)
-                    val config = readConfig()
-                    if (config.autoDisable) {
-                        XposedInit.log("[$TAG] WiFi lost — disabling ADB")
-                        disableAdb(context)
-                    }
+                    XposedInit.log("[$TAG] WiFi lost — leaving ADB state as-is (Android-managed)")
                 }
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                     if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
@@ -502,17 +504,8 @@ object AdbSystemHooks {
         }
     }
 
-    private fun disableAdb(context: Context) {
-        try {
-            Settings.Global.putInt(context.contentResolver, "adb_wifi_enabled", 0)
-        } catch (t: Throwable) {
-            XposedInit.log("[$TAG] Failed to disable ADB: ${t.message}")
-        }
-    }
-
     private data class AdbConfig(
         val autoEnable: Boolean = true,
-        val autoDisable: Boolean = false,
         val bootStart: Boolean = true,
         val locale: String = "system",
         val fixedPortEnabled: Boolean = false,
@@ -520,51 +513,25 @@ object AdbSystemHooks {
         val trustedSsids: Set<String> = emptySet()
     )
     private fun readConfig(): AdbConfig {
-        // Primary path: Settings.Global. The app writes the trust
-        // set to Settings.Global on every config save, so the hook
-        // can read it via the same provider the system uses
-        // internally — no file permission dance required.
-        try {
-            val cls = android.provider.Settings.Global::class.java
-            val gStr = cls.getMethod("getString",
-                android.content.ContentResolver::class.java,
-                String::class.java,
-                String::class.java)
-            val gInt = cls.getMethod("getInt",
-                android.content.ContentResolver::class.java,
-                String::class.java,
-                Int::class.javaPrimitiveType)
-            val ctx = top.cbug.adbx.App.appContext
-            val r = ctx.contentResolver
-            val trustedCsv = gStr.invoke(null, r, "adb_x_trusted_ssids", "") as String?
-            val autoEnable = (gInt.invoke(null, r, "adb_x_auto_enable", 1) as Int) == 1
-            val autoDisable = (gInt.invoke(null, r, "adb_x_auto_disable", 0) as Int) == 1
-            val fixedPortEnabled = (gInt.invoke(null, r, "adb_x_fixed_port_enabled", 0) as Int) == 1
-            val fixedPort = (gInt.invoke(null, r, "adb_x_fixed_port", 5555) as Int)
-            val trusted: Set<String> = if (trustedCsv.isNullOrBlank()) emptySet()
-                else trustedCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-            return AdbConfig(
-                autoEnable = autoEnable,
-                autoDisable = autoDisable,
-                bootStart = true,
-                locale = "system",
-                fixedPortEnabled = fixedPortEnabled,
-                fixedPort = fixedPort,
-                trustedSsids = trusted
-            )
-        } catch (_: Throwable) { }
-        // Fallback: world-readable mirror in /data/local/tmp/.
+        // Primary path: world-readable mirror at /data/local/tmp/.
+        // We cannot write to Settings.Global from a third-party APK
+        // because that requires WRITE_SECURE_SETTINGS. The mirror is
+        // written by Settings.syncConfigToFile() every time the user
+        // saves a config change. Set owner=root, mode=0644 — on most
+        // ROMs the settings process can read this. We catch
+        // permission errors explicitly and surface them in the log
+        // so on-device debugging can see exactly why a particular
+        // build is failing.
         val file = File(SYNC_CONFIG_FILE)
-        if (!file.exists() || !file.canRead()) return AdbConfig()
         return try {
+            val raw = file.readText()
             val map = mutableMapOf<String, String>()
-            for (line in file.readLines()) {
+            for (line in raw.lines()) {
                 val idx = line.trim().indexOf('=')
                 if (idx > 0) map[line.substring(0, idx).trim()] = line.substring(idx + 1).trim()
             }
             AdbConfig(
                 autoEnable = map.getOrDefault("auto_enable", "true").toBooleanStrictOrNull() ?: true,
-                autoDisable = map.getOrDefault("auto_disable", "false").toBooleanStrictOrNull() ?: false,
                 bootStart = map.getOrDefault("boot_start", "true").toBooleanStrictOrNull() ?: true,
                 locale = map.getOrDefault("locale", "system"),
                 fixedPortEnabled = map.getOrDefault("fixed_port_enabled", "false").toBooleanStrictOrNull() ?: false,
@@ -572,7 +539,10 @@ object AdbSystemHooks {
                 trustedSsids = map.getOrDefault("trusted_ssids", "")
                     .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             )
-        } catch (_: Throwable) { AdbConfig() }
+        } catch (t: Throwable) {
+            XposedInit.log("[$TAG] readConfig: ${t.javaClass.simpleName}: ${t.message}")
+            AdbConfig()
+        }
     }
 
     /**
