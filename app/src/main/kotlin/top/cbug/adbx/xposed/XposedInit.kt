@@ -44,26 +44,44 @@ class XposedInit : IXposedHookLoadPackage {
             } catch (_: Throwable) { }
             XposedStatus.markActive()
         }
-        // System_server is a Java process whose runtime package name varies by
-        // ROM — AOSP uses "android", OnePlus uses "android", but the process
-        // name always contains "system_server". Hook the system_server
-        // process by name rather than by package — that's the runtime we
-        // need ConnectivityManager / WifiManager / Settings.Global in.
+        // System_server hook on stock AOSP — runs in the system_server
+        // runtime where ConnectivityManager / WifiManager / Settings.Global
+        // are bound. Some OEMs (OnePlus in particular) only inject
+        // LSPosed modules into com.android.settings and never into
+        // system_server, so we also call into AdbSystemHooks when the
+        // process is the Settings app — it carries the same
+        // ConnectivityService / WifiManager singletons as system_server
+        // because they live in the OS framework, not the app process.
+        // We log every entry path so on-device debugging can confirm
+        // which one ran.
         val procName = lpparam.processName
         when {
             procName == "system_server" || procName.endsWith(":system_server") -> {
+                XposedBridge.log("[$TAG] handleLoadPackage: procName='$procName' package='${lpparam.packageName}' → system_server hook")
                 AdbSystemHooks.hook(lpparam)
             }
-            lpparam.packageName == "android" && procName != "system_server" -> {
-                // "android" package but not the system_server process — skip;
-                // AdbSystemHooks.hook() will be invoked by the system_server
-                // branch above. Some OnePlus builds invoke handleLoadPackage
-                // for the "android" package in BOTH zygote-derived processes
-                // (system_server is one of them), so the process-name check
-                // is necessary to avoid running the hook twice.
-                XposedBridge.log("[$TAG] handleLoadPackage: android proc='$procName' — skipping AdbSystemHooks")
+            // com.android.settings is the practical fallback on OnePlus.
+            // The Settings app keeps the framework singletons, so the
+            // hook still gets the real NetworkCallback dispatcher and the
+            // real Settings.Global resolver — we are not running in a
+            // sandbox.
+            lpparam.packageName == "com.android.settings" -> {
+                XposedBridge.log("[$TAG] handleLoadPackage: procName='$procName' package='${lpparam.packageName}' → settings-side system hook")
+                SettingsHooks.hook(lpparam)
+                AdbSystemHooks.hookSettings(lpparam)
             }
-            lpparam.packageName == "com.android.settings" -> SettingsHooks.hook(lpparam)
+            // Stripped LSPosed scope: sometimes the framework injects the
+            // module into the bare "android" package (uid 1000 framework
+            // process — usually zygote-derived and same runtime as
+            // system_server). Try once, otherwise stay silent so we
+            // don't double-register when system_server also gets a
+            // handleLoadPackage call.
+            lpparam.packageName == "android" && procName != "system_server" -> {
+                XposedBridge.log("[$TAG] handleLoadPackage: android proc='$procName' (system_server handled separately)")
+            }
+            else -> {
+                XposedBridge.log("[$TAG] handleLoadPackage: procName='$procName' package='${lpparam.packageName}' — no hook")
+            }
         }
     }
 }

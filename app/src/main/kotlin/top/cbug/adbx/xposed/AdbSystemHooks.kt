@@ -537,4 +537,37 @@ object AdbSystemHooks {
             AdbConfig()
         }
     }
+
+    /**
+     * Com.android.settings process hook. The Settings app is a privileged
+     * system app and gets the same ConnectivityManager / WifiManager /
+     * Settings.Global system services as system_server — they're shared
+     * singletons via ServiceManager. This means we can install the
+     * same NetworkCallback and the same Settings.Global writes without
+     * needing the actual system_server runtime. On OnePlus (where
+     * LSPosed scope "system" does not translate to a real system_server
+     * injection) this is the practical path to auto-toggle.
+     */
+    fun hookSettings(lpparam: LoadPackageParam) {
+        if (!registered.compareAndSet(false, true)) return
+        XposedInit.log("[$TAG] Loading settings-side hooks (process=${lpparam.processName})")
+        try {
+            val atClass = XposedHelpers.findClass("android.app.ActivityThread", null)
+            val activityThread = XposedHelpers.callStaticMethod(atClass, "currentActivityThread")
+            val context = XposedHelpers.callMethod(activityThread, "getSystemContext") as Context
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val wm = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val handler = Handler(Looper.getMainLooper())
+            if (cm == null || wm == null) {
+                XposedInit.log("[$TAG] settings-side: services not ready (cm=${cm != null}, wm=${wm != null})")
+                scheduleDeferredInit(context, handler, attempt = 1)
+                return
+            }
+            installCallbacks(context, cm, wm, handler)
+        } catch (t: Throwable) {
+            XposedInit.log("[$TAG] settings-side init failed: ${t.message}")
+            scheduleDeferredInitRetry(attempt = 1)
+        }
+    }
+
 }
