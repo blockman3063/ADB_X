@@ -96,16 +96,27 @@ object WifiHelper {
     }
 
     /**
-     * Parse the "Wi-Fi:" lines of `dumpsys wifi`. Each entry looks
-     * like:
-     *   Wi-Fi: 90:e2:ba:c5:09:42, SSID = "Foo", BSSID = 90:e2:ba:c5:09:42,
-     *          RSSI = -42, freq = 5220, level = 4, cap = ...
+     * Parse visible networks out of `dumpsys wifi` output. Two
+     * formats are in use across AOSP and OEM ROMs:
      *
-     * Returns at most [limit] entries (newest first by virtue of
-     * dumpsys ordering, which is best-effort sorted by last-scan).
+     *  - AOSP / Pixel: a single line per network,
+     *      Wi-Fi: aa:bb:..., SSID = "Foo", BSSID = ..., RSSI = -42, freq = 5220, ...
+     *
+     *  - OnePlus OxygenOS / OPlus framework: scan results are buried
+     *    in the per-event log under `CMD_ONESHOT_RSSI_POLL` lines that
+     *    look like
+     *      ... what=CMD_ONESHOT_RSSI_POLL ... "SSID" bssid rssi=-39 f=5805 ...
+     *    AOSP dumpsys output also surfaces connected-network RSSI
+     *    via `mWifiInfo SSID: "..." BSSID: ... RSSI: ...` — that one
+     *    we already parse in [parseConnectedNetwork].
+     *
+     * Returns at most [limit] entries. We dedupe by BSSID so a
+     * network polled multiple times keeps one row.
      */
     fun parseVisibleNetworks(dumpsysOutput: String, limit: Int = 100): List<VisibleNetwork> {
         val result = mutableListOf<VisibleNetwork>()
+        val seenBssid = linkedSetOf<String>()
+        // AOSP path — works on stock AOSP / Pixel / Samsung.
         for (line in dumpsysOutput.lines()) {
             val trimmed = line.trimStart()
             if (!trimmed.startsWith("Wi-Fi:")) continue
@@ -116,10 +127,35 @@ object WifiHelper {
             if (ssid.isNullOrBlank() || bssid.isNullOrBlank() || rssi == null) continue
             val ssidClean = cleanSsid(ssid)
             if (ssidClean.isBlank()) continue
-            // 2.4 GHz: channels 1-14, freq 2412-2484; 5 GHz: >=5000.
-            val is2g = freq != null && freq in 2400..2500
+            if (bssid !in seenBssid) {
+                seenBssid += bssid
+                val is2g = freq != null && freq in 2400..2500
+                result.add(VisibleNetwork(ssid = ssidClean, bssid = bssid,
+                    rssi = rssi, freq = freq ?: 0, is2g = is2g,
+                    lastSeenMs = System.currentTimeMillis()))
+                if (result.size >= limit) break
+            }
+        }
+        if (result.isNotEmpty()) return result
+        // OnePlus / OPlus path — fall through if AOSP path returned
+        // nothing. OnePlus exposes last-poll results as
+        // `CMD_ONESHOT_RSSI_POLL ... "ssid" bssid rssi=-N f=Mhz` —
+        // multiple entries per network so we keep only the most
+        // recent (last) per BSSID.
+        for (line in dumpsysOutput.lines()) {
+            if (!line.contains("CMD_ONESHOT_RSSI_POLL")) continue
+            // "USER_A39876_5G" bssid rssi=-39 f=5805 ...
+            val q = Regex(""""([^"\s]+)"\s+([0-9a-fA-F:]{17})\s+rssi\s*=\s*(-?\d+)\s+f\s*=\s*(\d+)""")
+            val m = q.find(line) ?: continue
+            val (ssidRaw, bssid, rssi, freq) = m.destructured
+            if (bssid in seenBssid) continue
+            seenBssid += bssid
+            val ssidClean = cleanSsid(ssidRaw)
+            if (ssidClean.isBlank()) continue
+            val is2g = freq.toIntOrNull()?.let { it in 2400..2500 } ?: true
             result.add(VisibleNetwork(ssid = ssidClean, bssid = bssid,
-                rssi = rssi, freq = freq ?: 0, is2g = is2g,
+                rssi = rssi.toIntOrNull() ?: -127, freq = freq.toIntOrNull() ?: 0,
+                is2g = is2g,
                 lastSeenMs = System.currentTimeMillis()))
             if (result.size >= limit) break
         }
@@ -127,30 +163,58 @@ object WifiHelper {
     }
 
     /**
-     * Return currently-visible (in-range) networks with signal. Uses
-     * `dumpsys wifi` via root and parses out the `Wi-Fi:` entries. Falls
-     * back to an empty list if dumpsys is gated. ~280 ms typical.
+     * Single consolidated dump of `dumpsys wifi` that yields the
+     * information for both [scanVisibleNetworks] and
+     * [getConnectedNetwork]. We used to run dumpsys twice (once per
+     * call) and the second invocation dominated the visible-scan
+     * path because dumpsys serialises the print and the second
+     * caller waited ~280 ms for nothing. A single shared dump runs
+     * in ~280 ms total and feeds both parsers.
      */
-    fun scanVisibleNetworks(): List<VisibleNetwork> {
-        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
-        if (!r.isSuccess() || r.output.isBlank()) return emptyList()
-        return parseVisibleNetworks(r.output)
+    data class WifiSnapshot(
+        val visible: List<VisibleNetwork>,
+        val connected: VisibleNetwork?,
+    )
+
+    fun snapshotWifi(): WifiSnapshot {
+        // OnePlus dumpsys wifi is ~21k lines; the full payload
+        // arrives in ~500 ms but parsing every line takes another
+        // 1 s. Trimming server-side via grep brings the wire size
+        // down to ~150 lines and parsing to ~5 ms.
+        val r = ShellUtils.executeSu(
+            "dumpsys wifi 2>&1 | grep -E 'mWifiInfo|Wi-Fi:|CMD_ONESHOT_RSSI_POLL' | head -200",
+            3000
+        )
+        if (!r.isSuccess() || r.output.isBlank()) {
+            return WifiSnapshot(emptyList(), null)
+        }
+        return WifiSnapshot(
+            visible = parseVisibleNetworks(r.output),
+            connected = parseConnectedNetwork(r.output)
+        )
     }
+
+    /**
+     * Return currently-visible (in-range) networks with signal. Uses
+     * [snapshotWifi] internally so we share one dumpsys pass with
+     * [getConnectedNetwork] callers. ~280 ms typical.
+     */
+    fun scanVisibleNetworks(): List<VisibleNetwork> = snapshotWifi().visible
 
     /**
      * Return the network the OS reports as currently linked, with
      * RSSI pulled from the latest dumpsys. Returns null if not
-     * connected to Wi-Fi.
-     *
-     * Approach: dumpsys reports one big line `mWifiInfo SSID: "...",
-     * BSSID = ..., RSSI = ..., supplicant state: COMPLETED, ...`. We
-     * grab SSID + BSSID + RSSI from there; the freqs are on a
-     * separate line but we don't need them for the link-state card.
+     * connected to Wi-Fi. Reads from the same shared dumpsys pass
+     * as [scanVisibleNetworks] when both are needed.
      */
-    fun getConnectedNetwork(): VisibleNetwork? {
-        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
-        if (!r.isSuccess() || r.output.isBlank()) return null
-        for (line in r.output.lines()) {
+    fun getConnectedNetwork(): VisibleNetwork? = snapshotWifi().connected
+
+    /**
+     * Pure parser for the mWifiInfo line — exposed so [snapshotWifi]
+     * can parse it without re-running dumpsys.
+     */
+    private fun parseConnectedNetwork(dumpsysOutput: String): VisibleNetwork? {
+        for (line in dumpsysOutput.lines()) {
             val t = line.trim()
             if (!t.startsWith("mWifiInfo SSID")) continue
             val ssid = Regex("""SSID:\s*\"([^\"]*)\"""").find(t)?.groupValues?.getOrNull(1)
@@ -574,7 +638,14 @@ object WifiHelper {
 
     private fun getSavedNetworksRootDumpsys(): List<SavedWifi> {
         if (!ShellUtils.hasRoot()) return emptyList()
-        val result = ShellUtils.executeSu("dumpsys wifi 2>&1 | grep -i -E 'SSID[=:]|ssid=' | head -100", 3000)
+        // Trim server-side: we only need the lines that mention
+        // SSID = "..." or ssid="..." (saved profile block) — the
+        // rest of the 21k-line dumpsys payload is RSSI poll history
+        // and resource tables that we don't need.
+        val result = ShellUtils.executeSu(
+            "dumpsys wifi 2>&1 | grep -E 'SSID[=:]|ssid=' | grep -v RSSI_POLL | head -200",
+            3000
+        )
         if (!result.isSuccess() || result.output.isBlank()) return emptyList()
         val seen = mutableSetOf<String>()
         val networks = mutableListOf<SavedWifi>()

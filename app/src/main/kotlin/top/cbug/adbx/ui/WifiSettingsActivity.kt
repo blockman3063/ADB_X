@@ -23,6 +23,7 @@ import top.cbug.adbx.util.WifiSection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -143,20 +144,21 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun refresh() {
         bgScope.launch {
             try {
-                // Pull three independent views of the wifi world and
-                // merge them into a single ordered list. The saved
-                // profile list comes from the config store (the app
-                // uid cannot read it directly; we route through cmd
-                // wifi / dumpsys / sysfs). The visible scan comes from
-                // dumpsys wifi so we can show in-range networks that
-                // the user has not yet configured. The current interface
-                // comes from the same dumpsys but is parsed separately
-                // because it carries live RSSI rather than a scan-time
-                // snapshot.
-                val saved = WifiHelper.getSavedNetworks(this@WifiSettingsActivity)
-                val visible = WifiHelper.scanVisibleNetworks()
-                val connected = WifiHelper.getConnectedNetwork()
-                val merged = WifiHelper.mergeForDisplay(saved, visible, connected)
+                // Pull the saved profiles (cmd wifi, ~30 ms) and the
+                // live wifi state (one shared dumpsys pass, ~280 ms)
+                // in parallel on the IO dispatcher so total wall
+                // time is bounded by the slower of the two instead of
+                // being added. The merged list then drives the
+                // adapter.
+                val savedDeferred = async {
+                    WifiHelper.getSavedNetworks(this@WifiSettingsActivity)
+                }
+                val snapshotDeferred = async {
+                    WifiHelper.snapshotWifi()
+                }
+                val saved = savedDeferred.await()
+                val snap = snapshotDeferred.await()
+                val merged = WifiHelper.mergeForDisplay(saved, snap.visible, snap.connected)
                 allItems = merged
                 withContext(Dispatchers.Main) { applyFilterAndSort() }
             } catch (t: Throwable) {
