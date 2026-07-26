@@ -208,41 +208,73 @@ object AdbSystemHooks {
             // third-party apps via WifiManager.configuredNetworks, but
             // system_server has full visibility. We piggyback on the
             // existing WifiManager injection point.
+            //
+            // On OnePlus OxygenOS 16+ the WifiManager binder service
+            // intentionally returns an empty list from
+            // getConfiguredNetworks() (see "WifiConfigManager -
+            // Configured networks Begin ---- ... End ----" in dumpsys
+            // wifi), while cmd wifi / dumpsys wifi / the
+            // WifiConfigStore.xml file all still contain the saved
+            // networks. /data/misc/apexdata/com.android.wifi/ is
+            // labeled apex_data_file and the system_app uid we run
+            // in via this hook can't read it. cmd service is
+            // shell-uid-only. The only remaining source on a OnePlus
+            // 16 + KernelSU build where LSPosed only hooks settings
+            // (not system_server) is `dumpsys wifi`, which the system
+            // wifi service will answer; it's slow (~10 s of poll
+            // history on this build) but we run it once per
+            // NetworkCallback onChanged() and cache to Settings.Global,
+            // so the slow boot only blocks the very first refresh
+            // after a WiFi state change.
             try {
-                val wifiClass = XposedHelpers.findClass("android.net.wifi.WifiManager", null)
-                val getNetworksMethod = wifiClass.getDeclaredMethod("getConfiguredNetworks")
-                val wmInstance = context.getSystemService(Context.WIFI_SERVICE)
-                val networks = getNetworksMethod.invoke(wmInstance) as? List<*> ?: emptyList<Any>()
-                val sb = StringBuilder()
-                for (net in networks) {
-                    if (net == null) continue
-                    val cls = net.javaClass
-                    val ssid = try { (XposedHelpers.callMethod(net, "getSSID") ?: "").toString() } catch (_: Throwable) { "" }
-                    val bssid = try { (XposedHelpers.callMethod(net, "getBSSID") ?: "").toString() } catch (_: Throwable) { "" }
-                    sb.append(ssid.replace("\"", "")).append('|')
-                      .append(bssid.replace("\"", "")).append('|')
-                      .append("Secured").append('\n')
+                val dump = StringBuilder()
+                // Stream dumpsys wifi into a temp file so a hung
+                // dumpsys output stream doesn't deadlock us into
+                // the waitFor timeout. We redirect stdout into the
+                // pipe and parse line-by-line on the reader side;
+                // if the call hangs the timeout fires and we destroy
+                // the process, which closes the pipe and unblocks
+                // the reader.
+                try {
+                    XposedInit.log("[$TAG] dumping via dumpsys wifi (60s ceiling)")
+                    val proc = ProcessBuilder("/system/bin/dumpsys", "wifi")
+                        .redirectErrorStream(true)
+                        .start()
+                    // Stream the output on a background thread so
+                    // the child's stdout pipe doesn't deadlock
+                    // waitFor() at ~64 kB of buffered output. We
+                    // cancel the read after 60 s by joining the
+                    // reader thread with the same deadline.
+                    val seen = HashSet<String>()
+                    val idSsidRegex = Regex("""ID:\s*\d+\s+SSID:\s*"?([^"\n]+?)"?\s+PROVIDER""")
+                    val readerThread = Thread {
+                        try {
+                            proc.inputStream.bufferedReader().useLines { lines ->
+                                for (line in lines) {
+                                    val m = idSsidRegex.find(line) ?: continue
+                                    val ssid = m.groupValues[1].trim()
+                                    if (ssid.isNotBlank() && ssid != "<unknown ssid>") seen.add(ssid)
+                                }
+                            }
+                        } catch (_: Throwable) { }
+                    }
+                    readerThread.isDaemon = true
+                    readerThread.start()
+                    val finished = proc.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)
+                    if (!finished) {
+                        proc.destroyForcibly()
+                    }
+                    readerThread.join(2000)
+                    XposedInit.log("[$TAG] dumpsys wifi finished=" + finished + " regex parsed " + seen.size + " SSIDs")
+                    for (s in seen) {
+                        dump.append(s).append('|')
+                            .append("|Secured\n")
+                    }
+                } catch (t: Throwable) {
+                    XposedInit.log("[$TAG] dumpsys wifi failed: ${t.message}")
                 }
-                // OnePlus OxygenOS /data/adb/lspd/config/ is mode 0777 but the
-                // system_file SELinux label only permits root and
-                // system_server writes — system_app context gets EACCES.
-                // Shell out to /system/bin/su via Runtime.exec() — absolute
-                // path because system_app PATH does not include /system/bin/.
-                // We try the lspd path first (cleaner location for cache
-                // files) then fall back to /data/local/tmp/ which has
-                // shell_data_file label readable by app uid.
-                val content = sb.toString().replace("'", "'\\''")
-                val r = Runtime.getRuntime().exec(
-                    arrayOf(
-                        "sh", "-c",
-                        "/system/bin/su 0 sh -c 'echo $content > /data/adb/lspd/config/adb_x_wifi_list && chmod 666 /data/adb/lspd/config/adb_x_wifi_list' || " +
-                        "/system/bin/su 0 sh -c 'echo $content > /data/local/tmp/adb_x_wifi_list && chmod 666 /data/local/tmp/adb_x_wifi_list' || " +
-                        "echo FAIL"
-                    )
-                )
-                val exit = try { r.waitFor() } catch (_: Throwable) { -1 }
-                val out = r.inputStream.bufferedReader().readText()
-                XposedInit.log("[$TAG] dumped " + networks.size + " WiFi networks (sh rc=" + exit + " out=\u0027" + out.take(60) + "\u0027)")
+                val source = if (dump.isNotEmpty()) "dumpsys-wifi" else "empty"
+                persistDump(context, dump, source)
             } catch (t: Throwable) {
                 XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
             }
@@ -424,14 +456,17 @@ object AdbSystemHooks {
 
     private fun writePairingPort(port: String) {
         try {
-            val ctx = XposedHelpers.callMethod(
-                XposedHelpers.callStaticMethod(
-                    XposedHelpers.findClass("android.app.ActivityThread", null),
-                    "currentActivityThread"
-                ),
-                "getSystemContext"
-            ) as Context
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "sh -c 'echo $port > /data/local/tmp/adb_x_pairing_port && chmod 666 /data/local/tmp/adb_x_pairing_port'"))
+            // Write directly from the hooked process context. The
+            // com.android.settings process runs as system_app (uid
+            // 1000) and can write /data/local/tmp/ (shell_data_file
+            // label, app-readable) without needing su — and without
+            // risking single-quote / shell-metacharacter escaping
+            // problems that broke the previous Runtime.exec("su -c
+            // sh -c '...'") approach.
+            val f = java.io.File("/data/local/tmp/adb_x_pairing_port")
+            f.parentFile?.mkdirs()
+            f.writeText(port)
+            try { f.setReadable(true, false) } catch (_: Throwable) { }
             XposedInit.log("[$TAG] pairing port written: $port")
         } catch (t: Throwable) {
             XposedInit.log("[$TAG] writePairingPort failed: ${t.message}")
@@ -590,6 +625,44 @@ object AdbSystemHooks {
         } catch (t: Throwable) {
             XposedInit.log("[$TAG] settings-side init failed: ${t.message}")
             scheduleDeferredInitRetry(attempt = 1)
+        }
+    }
+
+    /**
+     * Persist a dump to Settings.Global as adb_x_wifi_list_count +
+     * adb_x_wifi_list_<i> chunks. Called from installCallbacks() once
+     * the dump has been collected by either the XML read, the
+     * WifiManager reflection, or the legacy cmd wifi / dumpsys wifi
+     * fallback paths. We split content into 4 kB slices because
+     * Settings.Global values cap at around 92 kB on most ROMs.
+     */
+    private fun persistDump(context: Context, dump: StringBuilder, source: String) {
+        try {
+            val content = dump.toString()
+            if (content.isBlank()) {
+                XposedInit.log("[$TAG] persistDump: empty dump, nothing to write ($source)")
+                return
+            }
+            val chunkSize = 4000
+            val chunks = content.chunked(chunkSize)
+            val resolver = context.contentResolver
+            val settings = android.provider.Settings.Global::class.java
+            val putString = settings.getMethod(
+                "putString",
+                android.content.ContentResolver::class.java,
+                String::class.java,
+                String::class.java
+            )
+            try { putString.invoke(null, resolver, "adb_x_wifi_list_count", chunks.size.toString()) } catch (_: Throwable) { }
+            for ((i, chunk) in chunks.withIndex()) {
+                try { putString.invoke(null, resolver, "adb_x_wifi_list_$i", chunk) }
+                    catch (t: Throwable) {
+                        XposedInit.log("[$TAG] persistDump putString failed at chunk $i: ${t.message}")
+                    }
+            }
+            XposedInit.log("[$TAG] dumped " + dump.lines().count { it.isNotBlank() } + " WiFi networks to Settings.Global (" + chunks.size + " chunks, source=$source)")
+        } catch (t: Throwable) {
+            XposedInit.log("[$TAG] persistDump failed: ${t.message}")
         }
     }
 

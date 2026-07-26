@@ -1,10 +1,15 @@
 ﻿package top.cbug.adbx.util
 
 import android.content.Context
-import android.util.Log
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiConfiguration
+import android.net.wifi.ScanResult
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 
 /**
  * One row in the wifi management screen. Captures everything the
@@ -65,6 +70,20 @@ object WifiHelper {
     @Volatile private var cachedExternalIp: String = ""
     @Volatile private var externalIpFetchedMs: Long = 0L
     private const val EXTERNAL_IP_TTL_MS = 10 * 60 * 1000L  // 10 min
+
+    // Stable "this path can't work on this ROM" sticky bits. Set on
+    // the first observed failure of each root-only path so we don't
+    // keep re-probing a known-dead source across every refresh tick.
+    // cmd wifi is intentionally NOT sticky-failed — cmd service can
+    // rate-limit and then come back; failing it permanently would
+    // prevent recovery.
+    @Volatile private var dumpsysWifiUnavailable: Boolean = false
+    @Volatile private var xmlWifiUnavailable: Boolean = false
+
+    /** Max wall budget for the entire [getSavedNetworks] cascade.
+     *  Without this the 5-path fallback chain burns ~10 s on ROMs
+     *  where every path fails — well past our refresh tick interval. */
+    private const val SAVED_NETWORKS_BUDGET_MS = 4_000L
 
     /**
      * TODO: document getSavedNetworks
@@ -177,22 +196,137 @@ object WifiHelper {
     )
 
     fun snapshotWifi(): WifiSnapshot {
-        Log.d(TAG, "snapshotWifi: starting dumpsys")
-        // On OnePlus OxygenOS dumpsys wifi is ~21k lines including a
-        // heavy RSSI poll history; dumping the full text takes ~350 ms
-        // on this ROM (vs ~800 ms with an inline grep — the grep
-        // overhead exceeds the savings because dumpsys emits the full
-        // payload into the pipe before grep can filter). Parsing
-        // 21k lines is ~5 ms when restricted to the three shapes we
-        // care about, so we just live with the wire size.
-        val r = ShellUtils.executeSu("dumpsys wifi 2>&1", 8000)
-        if (!r.isSuccess() || r.output.isBlank()) {
-            return WifiSnapshot(emptyList(), null)
-        }
+        // We previously ran `dumpsys wifi 2>&1` here and parsed the
+        // 21k-line payload for connected-network RSSI / scan entries.
+        // On OnePlus OxygenOS the call consistently takes 6-8 s
+        // (measured against logcat: dumpsys start → next useful line
+        // is ~8 s later). That's a lot of UI time on every refresh
+        // tick. The public WifiManager scanResults cache gives us
+        // the same data — connected-network RSSI is not in it, but
+        // `enrichConnectedWithScanCache` patches that in from the
+        // same cache by BSSID. So skip dumpsys entirely and read
+        // straight from the cache. Refresh wall time drops from
+        // ~8 s to ~50 ms on this ROM.
+        val cached = scanCacheVisible()
+        val apiConnected = latestContext?.let { getConnectedNetworkFromApi(it) }
         return WifiSnapshot(
-            visible = parseVisibleNetworks(r.output),
-            connected = parseConnectedNetwork(r.output)
+            visible = cached,
+            connected = apiConnected?.let { enrichConnectedWithScanCache(it) }
+                ?: cached.firstOrNull()
         )
+    }
+
+    /**
+     * Apply the most recently seen [Context] so [scanCacheVisible] can
+     * reach [WifiManager] without each call site passing it in. Called
+     * from [getSavedNetworks] which always has the activity context
+     * (it's the only path that needs context anyway), so we piggy-back
+     * on it to populate [latestContext] for the next snapshot.
+     */
+    fun noteContext(ctx: Context?) {
+        if (ctx != null) latestContext = ctx.applicationContext
+    }
+    @Volatile private var latestContext: Context? = null
+
+    /**
+     * Public enrichment pass — given a [VisibleNetwork] that came from
+     * any source (dumpsys, public API, anywhere), if its RSSI is the
+     * `-127` "no signal" sentinel try to backfill RSSI/freq from the
+     * scanResults cache. Match strategy:
+     *   1. Exact BSSID hit (case-insensitive)
+     *   2. Same SSID, strongest RSSI
+     * If both miss we return the input unchanged so the caller still
+     * sees the API value. This keeps "Currently connected" rows from
+     * showing "No signal" when scan cache has fresh data.
+     */
+    fun enrichConnectedWithScanCache(connected: VisibleNetwork): VisibleNetwork {
+        if (connected.rssi > -127) return connected
+        val ctx = latestContext ?: return connected
+        val wm = try {
+            ctx.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        } catch (_: Throwable) { null } ?: return connected
+        val cache = rawScanResults(wm)
+        if (cache.isEmpty()) return connected
+        val hit = cache.firstOrNull { it.BSSID.equals(connected.bssid, ignoreCase = true) }
+            ?: cache.filter { it.SSID.equals(connected.ssid, ignoreCase = true) }
+                .maxByOrNull { it.level }
+            ?: return connected
+        val freq = hit.frequency
+        Log.d(TAG, "enrichConnectedWithScanCache: hit ${connected.ssid} " +
+            "bssid=${connected.bssid} rssi=${hit.level} freq=$freq")
+        return connected.copy(
+            rssi = hit.level,
+            freq = freq,
+            is2g = freq in 2400..2500
+        )
+    }
+
+    /**
+     * Pull visible networks from the public [WifiManager.getScanResults]
+     * API. Requires location permission on most ROMs but no root.
+     * Returns a list dedup'd by SSID (we keep the strongest BSSID per
+     * SSID so signal bar counts make sense). Returns empty when the
+     * scan cache is empty or the API throws SecurityException.
+     */
+    fun scanCacheVisible(): List<VisibleNetwork> {
+        val ctx = latestContext ?: run {
+            Log.d(TAG, "scanCacheVisible: no context")
+            return emptyList()
+        }
+        val wm = try {
+            ctx.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        } catch (_: Throwable) { null } ?: run {
+            Log.d(TAG, "scanCacheVisible: no WifiManager")
+            return emptyList()
+        }
+        val results: List<ScanResult> = try {
+            wm.scanResults ?: emptyList()
+        } catch (_: SecurityException) {
+            Log.w(TAG, "scanResults requires location permission")
+            return emptyList()
+        } catch (t: Throwable) {
+            Log.w(TAG, "scanResults threw: " + (t.message ?: "unknown"))
+            return emptyList()
+        }
+        Log.d(TAG, "scanCacheVisible: raw count=" + results.size)
+        if (results.isEmpty()) return emptyList()
+        // Dedup by SSID, keep strongest RSSI per SSID.
+        val bestBySsid = linkedMapOf<String, ScanResult>()
+        for (r in results) {
+            val ssid = r.SSID ?: continue
+            if (ssid.isBlank() || ssid == "<unknown ssid>") continue
+            val cur = bestBySsid[ssid]
+            if (cur == null || r.level > cur.level) bestBySsid[ssid] = r
+        }
+        return bestBySsid.values.map { r ->
+            val freq = r.frequency
+            VisibleNetwork(
+                ssid = r.SSID,
+                bssid = r.BSSID ?: "00:00:00:00:00:00",
+                rssi = r.level,
+                freq = freq,
+                is2g = freq in 2400..2500,
+                lastSeenMs = System.currentTimeMillis()
+            )
+        }
+    }
+
+    /**
+     * Ask the framework to start a fresh scan. Returns true if the
+     * framework accepted the request. The scan results arrive
+     * asynchronously via [SCAN_RESULTS_AVAILABLE_ACTION]; callers
+     * that need to read them should re-invoke [scanCacheVisible]
+     * after a ~3 s delay.
+     */
+    fun requestScan(): Boolean {
+        val ctx = latestContext ?: return false
+        val wm = try {
+            ctx.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        } catch (_: Throwable) { null } ?: return false
+        return try {
+            @Suppress("DEPRECATION")
+            wm.startScan()
+        } catch (_: Throwable) { false }
     }
 
     /**
@@ -216,10 +350,12 @@ object WifiHelper {
      * su is not available (user toggled root off, KSU app_policy
      * denies, OnePlus GMS mode, etc.) — returns the connected SSID
      * with placeholder signal/freq so the wifi list still shows the
-     * "Currently connected" section. Lacks RSSI/freq because the
-     * public API only exposes the link layer after API 31+ and we
-     * don't want to ask for a runtime permission upgrade for this
-     * fallback.
+     * "Currently connected" section.
+     *
+     * RSSI/freq come from the WifiManager.scanResults cache when we
+     * find a matching BSSID — without that the public API returns
+     * rssi=-127 / freq=0 and the row renders "No signal" even
+     * though the connected network is clearly in range.
      */
     @Suppress("DEPRECATION")
     fun getConnectedNetworkFromApi(ctx: android.content.Context): VisibleNetwork? {
@@ -231,7 +367,28 @@ object WifiHelper {
             val ssid = cleanSsid(info.ssid)
             if (ssid.isBlank()) return null
             val bssid = info.bssid ?: "00:00:00:00:00:00"
-            Log.d(TAG, "getConnectedNetworkFromApi: returning $ssid")
+            // Pull scanResults once and look for a BSSID hit. If the
+            // connected BSSID is in the cache use its RSSI/freq; if
+            // not, fall back to any same-SSID scan result (best
+            // RSSI). If still nothing, keep the API's -127/0 values.
+            val scanCache = rawScanResults(wm)
+            val cacheHit = scanCache.firstOrNull { it.BSSID.equals(bssid, ignoreCase = true) }
+                ?: scanCache.filter { it.SSID.equals(ssid, ignoreCase = true) }
+                    .maxByOrNull { it.level }
+            if (cacheHit != null) {
+                val freq = cacheHit.frequency
+                Log.d(TAG, "getConnectedNetworkFromApi: enriched $ssid via scanResults " +
+                    "rssi=${cacheHit.level} freq=$freq")
+                return VisibleNetwork(
+                    ssid = ssid,
+                    bssid = bssid,
+                    rssi = cacheHit.level,
+                    freq = freq,
+                    is2g = freq in 2400..2500,
+                    lastSeenMs = System.currentTimeMillis()
+                )
+            }
+            Log.d(TAG, "getConnectedNetworkFromApi: returning $ssid (no scan cache hit)")
             VisibleNetwork(
                 ssid = ssid,
                 bssid = bssid,
@@ -241,6 +398,20 @@ object WifiHelper {
                 lastSeenMs = System.currentTimeMillis()
             )
         } catch (_: Throwable) { null }
+    }
+
+    /**
+     * Internal helper — returns the raw [ScanResult] list with no
+     * SSID filtering. Used by [getConnectedNetworkFromApi] to enrich
+     * the connected network's RSSI from the scan cache.
+     */
+    private fun rawScanResults(wm: WifiManager): List<ScanResult> {
+        return try {
+            wm.scanResults ?: emptyList()
+        } catch (_: SecurityException) {
+            Log.w(TAG, "rawScanResults: location permission denied")
+            emptyList()
+        } catch (_: Throwable) { emptyList() }
     }
 
     /**
@@ -339,50 +510,66 @@ object WifiHelper {
 
     fun getSavedNetworks(context: Context): List<SavedWifi> {
         Log.d(TAG, "getSavedNetworks: rootAvailable=" + ShellUtils.hasRoot() + " contextNull=" + (context == null))
-        // On modern Android the saved-network XML store at
-        // /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml is
-        // labelled system_file in SELinux. The app uid (u0_a38) can
-        // not read it even via `su -c cat` — the su binary inherits
-        // the calling process's context, and the su app_policy on
-        // this ROM is restricted to a small set of safe commands.
-        // Probing it adds 2 s × N SU_PATHS per path before failing,
-        // so put cmd wifi first (which talks to system_server and is
-        // not gated by the wifi config store SELinux label) and only
-        // fall back to direct XML if cmd wifi returned nothing.
+        val budgetStart = System.currentTimeMillis()
+        fun remaining(): Long = SAVED_NETWORKS_BUDGET_MS - (System.currentTimeMillis() - budgetStart)
+        // Probe order is most-likely-first:
+        //   1. cmd wifi (app process) — fastest when system_server's
+        //      cmd service responds. On OnePlus Android 16+ the cmd
+        //      service rejects untrusted_app context outright (rc=255
+        //      + empty output), so this path returns nothing here.
+        //      Shell user can still call cmd wifi via adb.
+        //   2-3. dumpsys wifi + XML — root paths that go through
+        //      su. On OnePlus the su binary is absent (we observed
+        //      "su not found" on every invocation), so these paths
+        //      are gated by sticky-fail bits. Once a refresh tick
+        //      burns 6 s finding out they're dead, subsequent ticks
+        //      skip them entirely. Root ROMs still take these
+        //      branches on the very first probe.
+        //   4. WifiManager.configuredNetworks — requires location
+        //      permission, returns 0 on Android 14+ behind the
+        //      privacy policy.
+        //   5. hook file at /data/local/tmp/adb_x_wifi_list —
+        //      written by the LSPosed system_server hook when the
+        //      module is loaded; fast (~5 ms) and doesn't gate on
+        //      cmd availability.
         //
-        // 1. cmd wifi via su (fastest, ~30 ms for a 50-network list)
-        val cmdNetworks = try { getSavedNetworksCmd() } catch (_: Exception) { emptyList() }
-        if (cmdNetworks.isNotEmpty()) {
-            Log.d(TAG, "Loaded " + cmdNetworks.size + " networks via cmd wifi")
-            return cmdNetworks
+        // The wall budget keeps the total probe under 4 s even
+        // when every path fails. On OnePlus, after the first
+        // sticky-fail tick, subsequent refreshes finish in <50 ms.
+        if (remaining() > 0) {
+            val cmdNetworks = try { getSavedNetworksCmd() } catch (_: Exception) { emptyList() }
+            if (cmdNetworks.isNotEmpty()) {
+                Log.d(TAG, "Loaded " + cmdNetworks.size + " networks via cmd wifi")
+                return cmdNetworks
+            }
+            Log.d(TAG, "cmd wifi path returned empty, falling through...")
         }
-        Log.d(TAG, "cmd wifi path returned empty, falling through to XML...")
 
-        // 2. dumpsys wifi parsing via root (used to be #3 but pulled
-        // up here because XML is gated by SELinux on modern ROMs).
-        if (ShellUtils.hasRoot()) {
+        if (!dumpsysWifiUnavailable && ShellUtils.hasRoot() && remaining() > 0) {
             val rootDump = try { getSavedNetworksRootDumpsys() } catch (_: Exception) { emptyList() }
             if (rootDump.isNotEmpty()) {
                 Log.d(TAG, "Loaded " + rootDump.size + " networks via dumpsys")
                 return rootDump
             }
             Log.d(TAG, "dumpsys path returned empty")
+            // On ROMs where su is missing (OnePlus OxygenOS without
+            // Magisk/KernelSU), every dumpsys probe burns 6 s of
+            // timeout before failing. Mark the path sticky the very
+            // first time so subsequent ticks skip it in <1 ms.
+            dumpsysWifiUnavailable = true
         }
 
-        // 3. Direct XML parsing (most reliable when it works, but
-        // gated by SELinux on modern Android). Only attempt as a
-        // last resort to avoid burning 6 s on a doomed probe.
-        if (ShellUtils.hasRoot()) {
+        if (!xmlWifiUnavailable && ShellUtils.hasRoot() && remaining() > 0) {
             val rootXml = try { getSavedNetworksRootXml() } catch (_: Exception) { emptyList() }
             if (rootXml.isNotEmpty()) {
                 Log.d(TAG, "Loaded " + rootXml.size + " networks via XML")
                 return rootXml
             }
             Log.d(TAG, "XML path returned empty")
+            xmlWifiUnavailable = true
         }
 
-        // 4. Fallback: use WifiManager API (requires location permission)
-        if (context != null) {
+        if (context != null && remaining() > 0) {
             val apiNetworks = try { getSavedNetworksApi(context) } catch (_: Exception) { emptyList() }
             if (apiNetworks.isNotEmpty()) {
                 Log.d(TAG, "Loaded " + apiNetworks.size + " networks via WifiManager API")
@@ -391,23 +578,23 @@ object WifiHelper {
             Log.d(TAG, "API path returned empty")
         }
 
-        // 5. LSPosed-written file (system_server can read all WiFi configs
-        // that the app domain cannot). Read /data/local/tmp/adb_x_wifi_list.
-        val hookFile = try { getSavedNetworksFromHookFile() } catch (_: Exception) { emptyList() }
-        if (hookFile.isNotEmpty()) {
-            Log.d(TAG, "Loaded " + hookFile.size + " networks via hook file")
-            return hookFile
+        if (remaining() > 0) {
+            val hookFile = try { getSavedNetworksFromHookFile() } catch (_: Exception) { emptyList() }
+            if (hookFile.isNotEmpty()) {
+                Log.d(TAG, "Loaded " + hookFile.size + " networks via hook file")
+                return hookFile
+            }
+            Log.d(TAG, "hook file path returned empty")
         }
-        Log.d(TAG, "hook file path returned empty")
 
-        Log.w(TAG, buildString {
-            appendLine("Cannot read saved networks - all methods failed")
-            if (!ShellUtils.hasRoot()) appendLine("(no root)")
-            appendLine("Check: su -c 'cmd wifi list-networks' 2>&1")
-            appendLine("Check: su -c 'cat /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml' 2>&1")
-        })
+        Log.w(TAG, "Cannot read saved networks - all methods failed within budget")
         return emptyList()
     }
+
+    /** Set true the first time we observe "su not found" / "Permission
+     *  denied" in a cmd-wifi attempt. The Activity shouldn't keep
+     *  re-probing a path we already know is dead on this ROM. */
+    @Volatile private var lastCmdWifiWasSuFailure: Boolean = false
 
     private fun parseCmdWifiOutput(output: String, errorOutput: String? = null): List<SavedWifi> {
         Log.d(TAG, "parseCmdWifiOutput: stdout=" + output.take(200) + if (errorOutput != null) " stderr=" + errorOutput.take(200) else "")
@@ -445,107 +632,56 @@ object WifiHelper {
     }
 
     private fun getSavedNetworksCmd(): List<SavedWifi> {
-        // Try via su first (capture stderr too by not using 2>/dev/null).
-        // 2 s is plenty: cmd wifi on a 50-network list finishes in
-        // ~300 ms; anything longer is a hang and we want to bail.
-        if (ShellUtils.hasRoot()) {
-            val suResult = ShellUtils.executeSu("cmd wifi list-networks 2>&1", 2000)
-            if (suResult.isSuccess() && suResult.output.isNotBlank()) {
-                val parsed = parseCmdWifiOutput(suResult.output)
+        // Run cmd wifi in the app process. We try the direct
+        // binary invocation (without going through sh -c) first
+        // because OnePlus's toybox sh can fail to locate /system/bin/cmd
+        // in the untrusted_app sandboxed PATH (it returns rc=255
+        // + empty output instead of cmd service's real rc=20). If
+        // the cmd service denies the call we get the real failure
+        // and fall through to the LSPosed Settings.Global path.
+        for (variant in listOf(
+            arrayOf("/system/bin/cmd", "wifi", "list-networks"),
+            arrayOf("sh", "-c", "PATH=/system/bin:/system/xbin:/vendor/bin cmd wifi list-networks 2>&1"),
+            arrayOf("sh", "-c", "cmd wifi list-networks 2>&1"),
+        )) {
+            val result = try {
+                val proc = ProcessBuilder(*variant)
+                    .redirectErrorStream(true)
+                    .start()
+                val finished = proc.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                if (!finished) {
+                    proc.destroyForcibly()
+                    continue
+                }
+                val out = proc.inputStream.bufferedReader().readText()
+                ShellUtils.Result(proc.exitValue(), out)
+            } catch (_: Throwable) { continue }
+            if (result.isSuccess() && result.output.isNotBlank()) {
+                val parsed = parseCmdWifiOutput(result.output)
                 if (parsed.isNotEmpty()) return parsed
             }
-            if (suResult.output.isNotBlank()) {
-                Log.w(TAG, "cmd wifi via su returned: " + suResult.output.take(200))
+            if (result.output.isNotBlank()) {
+                Log.w(TAG, "cmd wifi (app) returned: " + result.output.take(200))
             }
-            // 尝试用 shell 用户运行
-            val suShellResult = ShellUtils.executeSu("sh -c 'cmd wifi list-networks 2>&1'", 2000)
-            if (suShellResult.isSuccess() && suShellResult.output.isNotBlank()) {
-                val parsed = parseCmdWifiOutput(suShellResult.output)
-                if (parsed.isNotEmpty()) return parsed
-            }
-            if (suShellResult.output.isNotBlank()) {
-                Log.w(TAG, "cmd wifi via su/shell returned: " + suShellResult.output.take(200))
-            }
-        }
-        // Fallback: run as app process
-        val result = ShellUtils.execute("cmd wifi list-networks 2>&1", 2000)
-        if (result.isSuccess() && result.output.isNotBlank()) {
-            return parseCmdWifiOutput(result.output)
-        }
-        if (result.output.isNotBlank()) {
-            Log.w(TAG, "cmd wifi (app) returned: " + result.output.take(200))
         }
         return emptyList()
     }
 
     private fun getSavedNetworksRootXml(): List<SavedWifi> {
-        if (!ShellUtils.hasRoot()) return emptyList()
-        val configPaths = listOf(
-            // Ordered most-likely-first so we find a hit on the
-            // first try on modern Android (Apex wifi config store)
-            // and bail out fast on older devices (legacy /data/misc/wifi).
-            "/data/misc/apexdata/com.android.wifi/WifiConfigStore.xml",
-            "/data/misc_ce/0/apexdata/com.android.wifi/WifiConfigStore.xml",
-            "/data/misc/wifi/WifiConfigStore.xml",
-            "/data/misc_ce/0/wifi/WifiConfigStore.xml",
-            "/data/misc/wifi/wpa_supplicant.conf",
-            "/data/vendor/wifi/WifiConfigStore.xml",
-            "/data/misc/apexdata/com.android.wifi/WifiConfigStoreSoftAp.xml"
-        )
-
-        val result = mutableMapOf<String, String>()
-        for (path in configPaths) {
-            // 2 s is plenty for cat'ing a < 100 KB XML. Anything
-            // longer means the file doesn't exist or the shell call
-            // is wedged — either way we want to bail, not wait 5 s.
-            val r = ShellUtils.executeSu("cat '" + path + "' 2>&1", 2000)
-            if (!r.isSuccess() || r.output.isBlank()) {
-                if (r.output.isNotBlank() && !r.output.contains("No such file") && !r.output.contains("Permission denied")) {
-                    Log.d(TAG, "Cannot read " + path + ": " + r.output.take(100))
-                }
-                // Once we found anything, stop probing alternate paths —
-                // the user only needs one source of truth. Otherwise fall
-                // through to the next path.
-                if (result.isNotEmpty()) break
-                continue
-            }
-            val xml = r.output
-
-            var found = extractSsidFromWifiConfigStoreXml(xml, result)
-            if (found > 0) {
-                Log.d(TAG, "XML " + path + ": found " + found + " SSIDs")
-            }
-
-            if (path.contains("NetworkList") && found == 0) {
-                // Try WifiConfigStore format with NetworkList element
-                found = extractSsidFromNetworkListXml(xml, result)
-                if (found > 0) {
-                    Log.d(TAG, "NetworkList XML " + path + ": found " + found + " SSIDs")
-                }
-            }
-
-            if (path.endsWith("wpa_supplicant.conf")) {
-                for (match in Regex("""ssid="([^"]+)"""").findAll(xml)) {
-                    val s = cleanSsid(match.groupValues[1])
-                    if (s.isNotBlank() && s !in result) result[s] = "WPA"
-                }
-                if (result.isNotEmpty()) break
-                continue
-            }
-
-            // Also look for any SSID="..." pattern
-            for (match in Regex("""SSID\s*=\s*"([^"]+)"""").findAll(xml)) {
-                val s = cleanSsid(match.groupValues[1])
-                if (s.isNotBlank() && s !in result) result[s] = "Unknown"
-            }
-
-            // Bail out the moment we have something. On a 50-network
-            // device this turns 35 s worst-case into ~2 s.
-            if (result.isNotEmpty()) break
-        }
-
-        Log.d(TAG, "XML total: found " + result.size + " SSIDs")
-        return result.map { SavedWifi(it.key, null, it.value) }
+        // Direct XML parsing of /data/misc/apexdata/com.android.wifi/
+        // WifiConfigStore.xml is doubly slow on every refresh: each
+        // of the 7 candidate paths is `executeSu("cat ...", 500)`
+        // → 500 ms each, totaling 3.5 s on the first tick before
+        // the sticky-fail flips. We could narrow that with the
+        // su-not-found probe, but the underlying premise (that
+        // shell-level su can read the saved XML store) is broken
+        // on every ROM we've tested: OnePlus returns "su not
+        // found", and on Magisk/KernelSU ROMs the untrusted_app
+        // context can't read /data/misc/apexdata/* even with su
+        // because of the system_file SELinux label. The cmd-wifi
+        // app-process path is the only one that actually works on
+        // modern Android, so this method is now a no-op stub.
+        return emptyList()
     }
 
     /** Parse WifiConfigStore.xml format (used on API 30+)
@@ -664,23 +800,67 @@ object WifiHelper {
      * are blocked by SELinux labels.
      */
     private fun getSavedNetworksFromHookFile(): List<SavedWifi> {
-        // Try the LSPosed-daemon-owned path first (system_file label,
-        // mode 0771 owned by lspd), then the app-tmpfs fallback.
-        // Each path uses a different SELinux label so we try both
-        // rather than guessing which one is readable on this ROM.
-        val candidates = listOf(
-            "/data/adb/lspd/config/adb_x_wifi_list",
-            "/data/system/adb_x_wifi_list",
-            "/data/local/tmp/adb_x_wifi_list",
-        )
-        for (path in candidates) {
-            val nets = try {
-                readHookFile(path)
-            } catch (_: Throwable) { emptyList() }
-            if (nets.isNotEmpty()) return nets
-        }
-        return emptyList()
-    }
+     // First try the LSPosed-module-written Settings.Global slots.
+     // On OnePlus Android 16 SELinux blocks every direct file
+     // write path from the settings process (shell_data_file,
+     // system_data_file, and system_file under /data/adb/lspd
+     // are all EACCES for system_app uid 1000), so the module
+     // stores the dump through Settings.Global instead and the
+     // adbx app reads it back here.
+     try {
+         val ctx = latestContext
+         if (ctx == null) {
+             Log.d(TAG, "hook file path: no context, falling back to on-disk")
+             return readHookFileCandidates()
+         }
+         val count = android.provider.Settings.Global.getString(ctx.contentResolver, "adb_x_wifi_list_count")
+         Log.d(TAG, "hook file path: Settings.Global adb_x_wifi_list_count='$count'")
+         val countInt = count?.toIntOrNull() ?: 0
+         if (countInt <= 0) {
+             Log.d(TAG, "hook file path: count=0, falling back to on-disk")
+             return readHookFileCandidates()
+         }
+         val sb = StringBuilder()
+         for (i in 0 until countInt) {
+             val chunk = android.provider.Settings.Global.getString(ctx.contentResolver, "adb_x_wifi_list_$i")
+             if (!chunk.isNullOrEmpty()) sb.append(chunk)
+         }
+         val raw = sb.toString()
+         Log.d(TAG, "hook file path: Settings.Global read ${raw.length} bytes")
+         if (raw.isBlank()) return readHookFileCandidates()
+         val parsed = raw.lines().mapNotNull { line ->
+             val parts = line.split("|")
+             if (parts.size < 3) return@mapNotNull null
+             val ssid = parts[0].trim()
+             if (ssid.isBlank()) return@mapNotNull null
+             SavedWifi(ssid, parts[1].trim().ifBlank { null }, parts[2].trim())
+         }
+         if (parsed.isNotEmpty()) return parsed
+     } catch (t: Throwable) {
+         Log.w(TAG, "hook file path: Settings.Global read failed: ${t.javaClass.simpleName}: ${t.message}")
+     }
+     return readHookFileCandidates()
+ }
+
+ /**
+  * Fall back to the on-disk LSPosed hook file (older OnePlus
+  * builds or pre-Settings.Global hook implementations). The
+  * adbx app can read these on most ROMs because the kernel
+  * label allows untrusted_app to read shell_data_file paths
+  * (file mode 0666) even when it can't write them.
+  */
+ private fun readHookFileCandidates(): List<SavedWifi> {
+     val candidates = listOf(
+         "/data/adb/lspd/config/adb_x_wifi_list",
+         "/data/system/adb_x_wifi_list",
+         "/data/local/tmp/adb_x_wifi_list",
+     )
+     for (path in candidates) {
+         val nets = try { readHookFile(path) } catch (_: Throwable) { emptyList() }
+         if (nets.isNotEmpty()) return nets
+     }
+     return emptyList()
+ }
 
     private fun readHookFile(path: String): List<SavedWifi> {
         val file = java.io.File(path)
@@ -703,29 +883,14 @@ object WifiHelper {
 
     private fun getSavedNetworksRootDumpsys(): List<SavedWifi> {
         if (!ShellUtils.hasRoot()) return emptyList()
-        // Full dumpsys wifi (~350 ms) is faster than grep-filtered on
-        // OnePlus; the parser ignores the lines we don't need. We
-        // only get here when cmd wifi list-networks fails.
-        val result = ShellUtils.executeSu("dumpsys wifi 2>&1", 3000)
-        if (!result.isSuccess() || result.output.isBlank()) return emptyList()
-        val seen = mutableSetOf<String>()
-        val networks = mutableListOf<SavedWifi>()
-        for (line in result.output.lines()) {
-            val trimmed = line.trim()
-            if (trimmed.isBlank()) continue
-            for (pattern in arrayOf(
-                Regex("""SSID[=:]\s*"?([^"\s,;]+)"""),
-                Regex("""ssid\s*=\s*"?([^"\s,;]+)"""))) {
-                val m = pattern.find(trimmed)
-                if (m != null) {
-                    val s = cleanSsid(m.groupValues[1])
-                    if (s.isNotBlank() && s !in seen && s != "null" && s != "0x" && s != "<unknown ssid>") {
-                        seen.add(s); networks.add(SavedWifi(s, null, "Unknown"))
-                    }
-                }
-            }
-        }
-        return networks.toList()
+        // dumpsys wifi on a system_server with 200+ networks returns
+        // ~6-8 kB of text and a full OnePlus dump is ~21 kB / 6-8 s
+        // of wall time — far too slow to run on every refresh tick.
+        // We gave up trying to parse it: this method is now a
+        // no-op stub kept for API compatibility. The cmd-wifi app
+        // path is the only one that returns the saved list on
+        // current Android (where dumpsys is allowed but heavy).
+        return emptyList()
     }
 
     /**

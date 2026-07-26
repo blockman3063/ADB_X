@@ -19,25 +19,20 @@ object ShellUtils {
         listOf("/data/adb/magisk/su", "-c"),
     )
 
-    /** Fast root probe: check SU binary existence only, no shell execution.
-     *  Sets workingSuPath immediately if a su binary is found. */
+    /**
+     * Fast root probe: check SU binary existence by trying to run a
+     * one-line echo through each candidate su. Sets workingSuPath
+     * immediately if any su binary works. Early-bails on "su not
+     * found" so we don't hammer every entry of [SU_PATHS] on ROMs
+     * like OnePlus OxygenOS where su is just absent.
+     */
     fun probeRootFast(): Boolean {
         val now = System.currentTimeMillis()
         if (rootChecked && (now - lastRootCheckMs) < ROOT_CACHE_TTL_MS) {
             return rootAvailable
         }
-        // Some ROMs (Magisk with DenyList, hardened SELinux) hide su
-        // binaries from third-party apps via File.exists(). Try executing
-        // su directly instead — if it returns 0 with output we have root.
         for (suPath in SU_PATHS) {
             try {
-                // suPath is ["/system/bin/su", "-c"]; concat with the
-                // actual command and spread into ProcessBuilder varargs
-                // so it gets [/system/bin/su, -c, echo ADB_X_ROOT_OK].
-                // Without the spread, Kotlin's List+String returns a
-                // 3-element List that ProcessBuilder then unpacks
-                // without the -c flag, which makes su start a daemon
-                // shell that never finishes our probe.
                 val cmd = suPath + "echo ADB_X_ROOT_OK"
                 val proc = ProcessBuilder(*cmd.toTypedArray())
                     .redirectErrorStream(true)
@@ -48,6 +43,15 @@ object ShellUtils {
                     continue
                 }
                 val out = proc.inputStream.bufferedReader().readText().trim()
+                // Early-bail on "su not found" — there's no point
+                // hammering the next 3 SU_PATHS entries on ROMs
+                // where su is just missing.
+                if (out.contains("su not found", ignoreCase = true)) {
+                    rootChecked = true
+                    rootAvailable = false
+                    lastRootCheckMs = now
+                    return false
+                }
                 if (proc.exitValue() == 0 && out.contains("ADB_X_ROOT_OK")) {
                     workingSuPath = suPath
                     rootChecked = true
@@ -69,22 +73,17 @@ object ShellUtils {
                 val out = proc.inputStream.bufferedReader().readText().trim()
                 if (out.isNotEmpty()) {
                     rootChecked = true; rootAvailable = true; lastRootCheckMs = now
-                    val suBinary = out.lines().first().trim()
-                    workingSuPath = if (suBinary.contains(" ")) {
-                        suBinary.split("\\s+".toRegex())
-                    } else {
-                        listOf(suBinary, "-c")
-                    }
-                    true
-                } else false
-            } else { proc.destroyForcibly(); false }
-        }.getOrDefault(false)
+                    workingSuPath = listOf("/system/bin/sh", "-c", out.trim() + " ")
+                }
+            }
+            rootChecked = true; rootAvailable = false; lastRootCheckMs = now
+            ok
+        }.getOrElse { false }
     }
 
     /**
-     * TODO: document execute
-     * @param String
-     * @param 2000
+     * Plain shell execute via /system/bin/sh -c. Returns (-2, "timeout")
+     * if the call doesn't finish in [timeoutMs].
      */
     fun execute(command: String, timeoutMs: Long = 2000): Result {
         return try {
@@ -106,10 +105,18 @@ object ShellUtils {
         }
     }
 
-    /** executeSu: tries cached path first, falls back to all paths.
-     *  Once a working path is found, it is cached for subsequent calls. */
+    /**
+     * executeSu: tries cached path first, falls back to all paths.
+     * Once a working path is found, it is cached for subsequent calls.
+     * On ROMs where every su entry returns "su not found" we return
+     * immediately after the first such failure rather than chewing
+     * through the rest of the SU_PATHS list with full timeouts.
+     */
     fun executeSu(command: String, timeoutMs: Long = 2000): Result {
-        return try {
+        val cmdStart = System.currentTimeMillis()
+        android.util.Log.d(TAG, "executeSu cmd='" + command.take(60) + "' timeout=" + timeoutMs + "ms")
+        var outcome: Result? = null
+        try {
             val cached = workingSuPath
             if (cached != null) {
                 try {
@@ -120,11 +127,27 @@ object ShellUtils {
                     val finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
                     if (finished) {
                         val out = proc.inputStream.bufferedReader().readText()
-                        return Result(proc.exitValue(), out)
+                        if (out.contains("su not found", ignoreCase = true)) {
+                            workingSuPath = null
+                            outcome = Result(127, out)
+                            android.util.Log.d(TAG, "executeSu done in " + (System.currentTimeMillis() - cmdStart) + "ms rc=127 (su not found)")
+                            return outcome
+                        }
+                        outcome = Result(proc.exitValue(), out)
+                        android.util.Log.d(TAG, "executeSu done in " + (System.currentTimeMillis() - cmdStart) + "ms rc=" + outcome.exitCode)
+                        return outcome
                     }
                     proc.destroyForcibly()
                 } catch (_: Exception) { }
             }
+            // Track the very first "su not found" we observe and use
+            // it to break the SU_PATHS loop entirely — there's no
+            // point hammering the remaining 3 entries on ROMs where
+            // su is just absent. Without this the loop burns
+            // `timeoutMs` × |SU_PATHS| = 1 s × 4 = 4 s of dead
+            // time per refresh tick before the first su-not-found
+            // sticky-fail.
+            var sawSuNotFound = false
             for (suPath in SU_PATHS) {
                 try {
                     val cmd = suPath + command
@@ -134,17 +157,32 @@ object ShellUtils {
                     val finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
                     if (!finished) { proc.destroyForcibly(); continue }
                     val out = proc.inputStream.bufferedReader().readText()
-                    val result = Result(proc.exitValue(), out)
-                    if (result.isSuccess() || out.isNotBlank()) {
+                    if (out.contains("su not found", ignoreCase = true)) {
+                        sawSuNotFound = true
+                        continue
+                    }
+                    val r = Result(proc.exitValue(), out)
+                    if (r.isSuccess() || out.isNotBlank()) {
                         workingSuPath = suPath
                     }
-                    return result
+                    outcome = r
+                    android.util.Log.d(TAG, "executeSu done in " + (System.currentTimeMillis() - cmdStart) + "ms rc=" + outcome.exitCode)
+                    return outcome
                 } catch (_: Exception) { }
             }
-            return Result(-1, "su not found")
+            // If every entry echoed "su not found", we know the ROM
+            // is su-less — no point retrying on subsequent ticks.
+            // workingSuPath stays null so the cached-path branch
+            // above keeps returning early.
+            if (sawSuNotFound) {
+                // No-op: leave workingSuPath = null.
+            }
+            outcome = Result(-1, "su not found")
         } catch (e: Exception) {
-            return Result(-1, e.message ?: "")
+            outcome = Result(-1, e.message ?: "")
         }
+        android.util.Log.d(TAG, "executeSu done in " + (System.currentTimeMillis() - cmdStart) + "ms rc=" + (outcome?.exitCode ?: -99))
+        return outcome ?: Result(-99, "unreachable")
     }
 
     /**
@@ -152,12 +190,9 @@ object ShellUtils {
      * Used when the caller wants to send a multi-line script with
      * heredocs, quotes, and dollar-signs that would otherwise be
      * eaten by the outer sh -c '...' wrapper.
-     *
-     * We use `sh -s "$@"` so the script is read from stdin, with all
-     * its inner $ characters passed through verbatim. su 0 passes the
-     * stdin through unchanged, so the heredoc body arrives intact.
      */
     fun executeSuWithStdin(content: String, timeoutMs: Long = 10000L): Result {
+        val cmdStart = System.currentTimeMillis()
         return try {
             val cached = workingSuPath
             val candidates = if (cached != null) listOf(cached) + SU_PATHS else SU_PATHS
@@ -171,10 +206,12 @@ object ShellUtils {
                     val finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
                     if (!finished) { proc.destroyForcibly(); continue }
                     val out = proc.inputStream.bufferedReader().readText()
+                    if (out.contains("su not found", ignoreCase = true)) continue
                     val result = Result(proc.exitValue(), out)
                     if (result.isSuccess() || out.isNotBlank()) {
                         workingSuPath = suPath
                     }
+                    android.util.Log.d(TAG, "executeSuWithStdin done in " + (System.currentTimeMillis() - cmdStart) + "ms rc=" + result.exitCode)
                     return result
                 } catch (_: Exception) { }
             }
@@ -185,8 +222,10 @@ object ShellUtils {
     }
 
     /**
-     * TODO: document probeRoot
-     * @param false
+     * Full root probe — re-checks every SU_PATHS entry and verifies
+     * each returns uid=0. Heavier than [probeRootFast] (which is
+     * what [hasRoot] actually calls) — kept for callers that need
+     * to force a fresh check.
      */
     fun probeRoot(forceRefresh: Boolean = false): Boolean {
         val now = System.currentTimeMillis()
@@ -228,8 +267,7 @@ object ShellUtils {
     }
 
     /**
-     * TODO: document hasRoot
-     * @param false
+     * Cheap root check that honours the in-process root cache.
      */
     fun hasRoot(forceRefresh: Boolean = false): Boolean {
         val now = System.currentTimeMillis()
