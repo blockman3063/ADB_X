@@ -5,4 +5,9 @@
         android:icon="@drawable/ic_sort"
         android:title="@string/wifi_sort"
         android:showAsAction="ifRoom" />
+    <item
+        android:id="@+id/action_refresh"
+        android:icon="@drawable/ic_refresh"
+        android:title="@string/wifi_refresh"
+        android:showAsAction="ifRoom" />
 </menu>

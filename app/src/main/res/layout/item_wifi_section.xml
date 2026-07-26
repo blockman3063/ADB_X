@@ -1,26 +1,47 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
+<?xml version="1.0" encoding="utf-8"?><!--
     Section header for the wifi management list, e.g. "Connected" or
     "Saved networks" or "Other networks" — same look as the system
     Wi-Fi settings' grouped-list headers. We pick the style that
-    matches what Android itself shows: a single line, prominent
+    matches what Android itself shows: a single line with the
+    collapse/expand chevron on the trailing edge, prominent muted
     color, smaller text than row content, no card chrome.
--->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+
+    The chevron indicates whether the user has folded the section's
+    body — folded sections emit only the header row, expanded
+    sections emit the header followed by every network in that
+    group. Tapping the header toggles the bit in
+    WifiSettingsActivity.sectionExpanded.
+--><LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
     android:paddingHorizontal="8dp"
     android:paddingTop="20dp"
-    android:paddingBottom="8dp">
+    android:paddingBottom="8dp"
+    android:background="?attr/selectableItemBackground"
+    android:minHeight="48dp"
+    android:focusable="true"
+    android:clickable="true">
 
     <TextView
         android:id="@+id/tvSectionTitle"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
+        android:layout_weight="1"
         android:layout_height="wrap_content"
         android:textAppearance="?attr/textAppearanceTitleSmall"
         android:textColor="?attr/colorOnSurfaceVariant"
         android:textStyle="bold"
         android:textAllCaps="false"
         tools:text="Saved networks" />
-</FrameLayout>
+
+    <ImageView
+        android:id="@+id/ivSectionChevron"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_marginStart="8dp"
+        android:src="@drawable/ic_chevron_right"
+        android:contentDescription="@string/wifi_section_collapse"
+        android:rotation="90" />
+</LinearLayout>
