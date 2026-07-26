@@ -78,13 +78,34 @@ jobs:
           echo "versionCode=$VERCODE" >> "$GITHUB_OUTPUT"
           echo "versionName=$VERNAME" >> "$GITHUB_OUTPUT"
 
+      - name: Drop any existing release for this tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # softprops/action-gh-release refuses to update the
+          # immutable title of an already-published release, so a
+          # re-run for the same tag leaves the prior `name:` stuck
+          # even though we passed the correct template. We delete
+          # any pre-existing release on this tag first; softprops
+          # then re-creates it with the current versionName.
+          set +e
+          gh release delete "$TAG" --yes --repo ${{ github.repository }}
+          echo "deleted any existing release for $TAG (rc=$?)"
+          set -e
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ADB_X v${{ steps.apk.outputs.versionName }}
           body: |
             ## ADB_X v${{ steps.apk.outputs.versionName }}
-            Xposed module - wireless ADB enhancement.
+
+            Xposed module — wireless ADB enhancement.
+
+            ### Changelog
+
+            See https://github.com/blockman3063/ADB_X/compare/${{ steps.apk.previousVersionName }}...v${{ steps.apk.outputs.versionName }}
           files: app/build/outputs/apk/release/app-release.apk
           draft: false
           prerelease: false
@@ -186,7 +207,7 @@ jobs:
           body = "ADB_X v$VN - wireless ADB enhancement Xposed module.\n\n## Changes since previous release\n\n" + notes + "\n\nSource: https://github.com/blockman3063/ADB_X"
           payload = {
               "tag_name":   "$TAG_NAME",
-              "name":       "ADB_X $TAG_NAME",
+              "name":       "ADB_X v$VN",
               "body":       body,
               "draft":      True,
               "prerelease": False,
