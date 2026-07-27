@@ -322,8 +322,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun pushStatusToActiveFragment() {
         val frag = supportFragmentManager.findFragmentById(R.id.nav_host) ?: return
+        val model = buildStatusUiModel()
         when (frag) {
-            is StatusFragment -> frag.renderStatus(buildStatusUiModel())
+            is StatusFragment -> frag.renderStatus(model)
+            is NetworkFragment -> frag.renderPairing(
+                pairingPort = model.pairingPort,
+                pairingCode = model.pairingCode,
+                localIp = model.localIp,
+                externalIp = model.externalIp,
+                adbEnabled = model.adbState,
+            )
         }
     }
 
