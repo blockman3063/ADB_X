@@ -64,6 +64,32 @@ jobs:
       - name: Build release APK
         run: chmod +x gradlew && ./gradlew assembleRelease
 
+      - name: Verify version bumped relative to previous tag
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          # Guard against accidentally tagging a release that has
+          # the same manifest versionName as the prior one. Without
+          # this the user could `git tag v1.1.1` on a commit that
+          # never bumped the build.gradle.kts and the CI would
+          # silently publish a duplicate release. We refuse to
+          # build if the manifest versionName didn't move.
+          PREV_TAG=$(git tag --sort=-creatordate \
+            | grep -E '^v[0-9]' \
+            | grep -v "^${CURRENT_TAG}$" \
+            | head -1 || true)
+          CURRENT_NAME=$(awk -F'"' '/versionName/ {print $2; exit}' app/build.gradle.kts)
+          echo "previous tag = ${PREV_TAG:-<none>}"
+          echo "current versionName = $CURRENT_NAME"
+          if [ -n "$PREV_TAG" ]; then
+            PREV_NAME=${PREV_TAG#v}
+            if [ "$PREV_NAME" = "$CURRENT_NAME" ]; then
+              echo "::error::versionName $CURRENT_NAME was already published at tag $PREV_TAG."
+              echo "Run scripts/bump_version.sh to bump the manifest before pushing the next tag."
+              exit 1
+            fi
+          fi
+
       - name: Extract version info
         id: apk
         run: |
