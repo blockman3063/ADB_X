@@ -57,7 +57,6 @@ class WifiStateReceiver : BroadcastReceiver() {
 
             if (!AppSettings.autoEnable) {
                 Log.d(TAG, "auto-enable not armed, skip")
-                pending.finish()
                 return
             }
 
@@ -65,7 +64,6 @@ class WifiStateReceiver : BroadcastReceiver() {
             Log.d(TAG, "Wi-Fi state changed: ssid='" + ssid + "' action=" + action)
             if (ssid.isBlank()) {
                 Log.d(TAG, "empty SSID, skip")
-                pending.finish()
                 return
             }
 
@@ -80,7 +78,13 @@ class WifiStateReceiver : BroadcastReceiver() {
         } catch (t: Throwable) {
             Log.w(TAG, "evaluate failed", t)
         } finally {
-            pending.finish()
+            // Single, authoritative finish for the goAsync() token.
+            // Early-return paths in the try block used to call
+            // pending.finish() inline; that double-finish throws
+            // IllegalStateException("Broadcast already finished")
+            // and crashes the process when NETWORK_STATE_CHANGED
+            // fires while no SSID is connected.
+            try { pending.finish() } catch (_: Throwable) { }
         }
     }
 
