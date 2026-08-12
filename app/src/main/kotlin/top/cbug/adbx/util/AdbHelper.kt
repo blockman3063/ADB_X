@@ -449,7 +449,18 @@ object AdbHelper {
         Log.d(TAG, "triggerPairing: service call adb 8")
         val suAttempt = ShellUtils.executeSu("service call adb 8", 3000)
         if (suAttempt.isSuccess()) return true
-        // Second try: open the Developer Options wireless-debug screen
+        // Second try: ask the system_server-side hook to fire
+        // startAdbPairing() by writing the request marker file.
+        // This requires neither Settings Intent nor special shell
+        // permissions; the LSPosed watcher picks it up within ~1 s.
+        try {
+            val requestFile = java.io.File("/data/local/tmp/adb_x_request_pair")
+            requestFile.parentFile?.mkdirs()
+            java.io.File(requestFile.absolutePath).writeText("1")
+            Log.d(TAG, "triggerPairing: wrote request marker for system_server hook")
+            return true
+        } catch (_: Throwable) { }
+        // Third try: open the Developer Options wireless-debug screen
         // directly via Settings Intent. The user then taps "Pair device"
         // themselves, which goes through the system-level IAdbManager
         // and shows the dialog. We don't need any special permission to

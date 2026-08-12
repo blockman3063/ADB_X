@@ -227,54 +227,64 @@ object AdbSystemHooks {
             // so the slow boot only blocks the very first refresh
             // after a WiFi state change.
             try {
-                val dump = StringBuilder()
-                // Stream dumpsys wifi into a temp file so a hung
-                // dumpsys output stream doesn't deadlock us into
-                // the waitFor timeout. We redirect stdout into the
-                // pipe and parse line-by-line on the reader side;
-                // if the call hangs the timeout fires and we destroy
-                // the process, which closes the pipe and unblocks
-                // the reader.
-                try {
-                    XposedInit.log("[$TAG] dumping via dumpsys wifi (60s ceiling)")
-                    val proc = ProcessBuilder("/system/bin/dumpsys", "wifi")
-                        .redirectErrorStream(true)
-                        .start()
-                    // Stream the output on a background thread so
-                    // the child's stdout pipe doesn't deadlock
-                    // waitFor() at ~64 kB of buffered output. We
-                    // cancel the read after 60 s by joining the
-                    // reader thread with the same deadline.
-                    val seen = HashSet<String>()
-                    val idSsidRegex = Regex("""ID:\s*\d+\s+SSID:\s*"?([^"\n]+?)"?\s+PROVIDER""")
-                    val readerThread = Thread {
+                // dumpsys wifi is slow on some ROMs and can take >10 s.
+                // Run it on a worker thread so we never block the
+                // main handler / system_server main thread.
+                val done = java.util.concurrent.CountDownLatch(1)
+                Thread {
+                    try {
+                        val dump = StringBuilder()
+                        // Stream dumpsys wifi into a temp file so a
+                        // hung output stream doesn't deadlock us into
+                        // the waitFor timeout. We redirect stdout into
+                        // the pipe and parse line-by-line on the reader
+                        // side; if the call hangs the timeout fires and
+                        // we destroy the process, which closes the pipe
+                        // and unblocks the reader.
                         try {
-                            proc.inputStream.bufferedReader().useLines { lines ->
-                                for (line in lines) {
-                                    val m = idSsidRegex.find(line) ?: continue
-                                    val ssid = m.groupValues[1].trim()
-                                    if (ssid.isNotBlank() && ssid != "<unknown ssid>") seen.add(ssid)
-                                }
+                            XposedInit.log("[$TAG] dumping via dumpsys wifi (60s ceiling)")
+                            val proc = ProcessBuilder("/system/bin/dumpsys", "wifi")
+                                .redirectErrorStream(true)
+                                .start()
+                            // Stream the output on a background thread so
+                            // the child's stdout pipe doesn't deadlock
+                            // waitFor() at ~64 kB of buffered output. We
+                            // cancel the read after 60 s by joining the
+                            // reader thread with the same deadline.
+                            val seen = HashSet<String>()
+                            val idSsidRegex = Regex("""ID:\s*\d+\s+SSID:\s*"?([^"\n]+?)"?\s+PROVIDER""")
+                            val readerThread = Thread {
+                                try {
+                                    proc.inputStream.bufferedReader().useLines { lines ->
+                                        for (line in lines) {
+                                            val m = idSsidRegex.find(line) ?: continue
+                                            val ssid = m.groupValues[1].trim()
+                                            if (ssid.isNotBlank() && ssid != "<unknown ssid>") seen.add(ssid)
+                                        }
+                                    }
+                                } catch (_: Throwable) { }
                             }
-                        } catch (_: Throwable) { }
-                    }
-                    readerThread.isDaemon = true
-                    readerThread.start()
-                    val finished = proc.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)
-                    if (!finished) {
-                        proc.destroyForcibly()
-                    }
-                    readerThread.join(2000)
-                    XposedInit.log("[$TAG] dumpsys wifi finished=" + finished + " regex parsed " + seen.size + " SSIDs")
-                    for (s in seen) {
-                        dump.append(s).append('|')
-                            .append("|Secured\n")
-                    }
-                } catch (t: Throwable) {
-                    XposedInit.log("[$TAG] dumpsys wifi failed: ${t.message}")
-                }
-                val source = if (dump.isNotEmpty()) "dumpsys-wifi" else "empty"
-                persistDump(context, dump, source)
+                            readerThread.isDaemon = true
+                            readerThread.start()
+                            val finished = proc.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)
+                            if (!finished) {
+                                proc.destroyForcibly()
+                            }
+                            readerThread.join(2000)
+                            XposedInit.log("[$TAG] dumpsys wifi finished=" + finished + " regex parsed " + seen.size + " SSIDs")
+                            for (s in seen) {
+                                dump.append(s).append('|')
+                                    .append("|Secured\n")
+                            }
+                        } catch (t: Throwable) {
+                            XposedInit.log("[$TAG] dumpsys wifi failed: ${t.message}")
+                        }
+                        val source = if (dump.isNotEmpty()) "dumpsys-wifi" else "empty"
+                        persistDump(context, dump, source)
+                    } catch (_: Throwable) { }
+                    done.countDown()
+                }.start()
+                done.await(65, java.util.concurrent.TimeUnit.SECONDS)
             } catch (t: Throwable) {
                 XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
             }
@@ -309,7 +319,14 @@ object AdbSystemHooks {
                         val raw = requestFile.readText().trim()
                         XposedInit.log("[$TAG] pair-request detected: $raw")
                         try { requestFile.delete() } catch (_: Throwable) { }
-                        if (raw == "1") triggerAdbPairing(context)
+                        if (raw == "1") {
+                            // triggerAdbPairing uses reflection + Runtime.exec;
+                            // run it off the main handler so a slow OEM path
+                            // cannot block system_server's main thread.
+                            Thread {
+                                try { triggerAdbPairing(context) } catch (_: Throwable) { }
+                            }.start()
+                        }
                     }
                 } catch (t: Throwable) {
                     XposedInit.log("[$TAG] pair-request poll error: ${t.message}")
