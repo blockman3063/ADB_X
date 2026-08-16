@@ -7,6 +7,7 @@ import android.util.Log
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import top.cbug.adbx.store.Settings as AppSettings
 
 object AdbHelper {
 
@@ -181,6 +182,13 @@ object AdbHelper {
         return false
     }
 
+    fun isTcpModePreferred(): Boolean {
+        return try {
+            AppSettings.load(top.cbug.adbx.App.appContext)
+            AppSettings.useTcpMode
+        } catch (_: Throwable) { false }
+    }
+
     /**
      * TODO: document enableWirelessAdb
      */
@@ -190,9 +198,13 @@ object AdbHelper {
         // settings put global.  NEVER restart adbd — that kills the
         // wireless connection we're running over.
         ShellUtils.executeSu("settings put global adb_wifi_enabled 1", 1500)
-        // Also set service props as hints for the next adbd life-cycle.
-        ShellUtils.executeSu("setprop service.adb.tls.port 5555", 500)
-        ShellUtils.executeSu("setprop service.adb.tcp.port 5555", 500)
+        if (isTcpModePreferred()) {
+            ShellUtils.executeSu("setprop service.adb.tls.port 0", 500)
+            ShellUtils.executeSu("setprop service.adb.tcp.port 5555", 500)
+        } else {
+            ShellUtils.executeSu("setprop service.adb.tls.port 5555", 500)
+            ShellUtils.executeSu("setprop service.adb.tcp.port 5555", 500)
+        }
         return true
     }
 
@@ -398,7 +410,8 @@ object AdbHelper {
         val port: String,
         val pairingPort: String,
         val pairingCode: String,
-        val hasRoot: Boolean
+        val hasRoot: Boolean,
+        val mode: String = ""
     )
 
     /**
@@ -412,7 +425,24 @@ object AdbHelper {
         val port = getCurrentPort(context)
         val pairingPort = getPairingPort()
         val pairingCode = readPairingCode()
-        AdbStatus(enabled, port, pairingPort, pairingCode, hasRoot)
+        val mode = detectAdbMode(port)
+        AdbStatus(enabled, port, pairingPort, pairingCode, hasRoot, mode)
+    }
+
+    private fun detectAdbMode(port: String): String {
+        if (port.isBlank()) return ""
+        return try {
+            val tls = ShellUtils.executeSu("getprop service.adb.tls.port", 400).output.trim()
+            val tcp = ShellUtils.executeSu("getprop service.adb.tcp.port", 400).output.trim()
+            when {
+                port == tls && port == tcp -> ""
+                port == tls -> "tls"
+                port == tcp -> "tcp"
+                else -> ""
+            }
+        } catch (_: Throwable) {
+            ""
+        }
     }
 
     /**

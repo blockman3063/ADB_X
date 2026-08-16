@@ -19,6 +19,8 @@ object Settings {
     private const val KEY_WIRED_AUTO_ENABLE = "wired_auto_enable"
     private const val KEY_WIRED_AUTO_DISABLE = "wired_auto_disable"
     private const val KEY_TRUSTED_USB_SERIALS = "trusted_usb_serials"
+    private const val KEY_AUTO_COPY_ADDRESS = "auto_copy_address"
+    private const val KEY_USE_TCP_MODE = "use_tcp_mode"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -35,6 +37,8 @@ object Settings {
     @Volatile var wiredAutoEnable = true
     @Volatile var wiredAutoDisable = false
     @Volatile var usbAdbEnabled = false
+    @Volatile var autoCopyAddressEnabled = true
+    @Volatile var useTcpMode: Boolean = false
 
     private var trustedSsids: MutableSet<String> = mutableSetOf()
     private var trustedUsbSerials: MutableSet<String> = mutableSetOf()
@@ -56,6 +60,8 @@ object Settings {
         wiredAutoDisable = p.getBoolean(KEY_WIRED_AUTO_DISABLE, false)
         usbAdbEnabled = p.getBoolean("usb_adb_enabled", false)
         trustedUsbSerials = p.getStringSet(KEY_TRUSTED_USB_SERIALS, emptySet())!!.toMutableSet()
+        autoCopyAddressEnabled = p.getBoolean(KEY_AUTO_COPY_ADDRESS, true)
+        useTcpMode = p.getBoolean(KEY_USE_TCP_MODE, false)
     }
 
     /**
@@ -127,6 +133,8 @@ object Settings {
             .putBoolean(KEY_WIRED_AUTO_DISABLE, wiredAutoDisable)
             .putBoolean("usb_adb_enabled", usbAdbEnabled)
             .putStringSet(KEY_TRUSTED_USB_SERIALS, trustedUsbSerials)
+            .putBoolean(KEY_AUTO_COPY_ADDRESS, autoCopyAddressEnabled)
+            .putBoolean(KEY_USE_TCP_MODE, useTcpMode)
             .apply()
         // Defer config sync to background thread to avoid su blocking main thread
         thread(name = "adb-x-sync") {

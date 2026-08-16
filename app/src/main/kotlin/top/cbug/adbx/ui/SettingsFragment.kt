@@ -21,6 +21,8 @@ class SettingsFragment : Fragment() {
 
     private lateinit var swAutoEnable: MaterialSwitch
     private lateinit var swBootStart: MaterialSwitch
+    private lateinit var swAutoCopyAddress: MaterialSwitch
+    private lateinit var swUseTcpMode: MaterialSwitch
     private lateinit var cardLanguage: MaterialCardView
     private lateinit var tvLanguageSub: TextView
     private lateinit var tvAboutVersion: TextView
@@ -34,6 +36,8 @@ class SettingsFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         swAutoEnable    = view.findViewById(R.id.swAutoEnable)
         swBootStart     = view.findViewById(R.id.swBootStart)
+        swAutoCopyAddress = view.findViewById(R.id.swAutoCopyAddress)
+        swUseTcpMode     = view.findViewById(R.id.swUseTcpMode)
         cardLanguage    = view.findViewById(R.id.cardLanguage)
         tvLanguageSub   = view.findViewById(R.id.tvLanguageSub)
         tvAboutVersion  = view.findViewById(R.id.tvAboutVersion)
@@ -42,6 +46,8 @@ class SettingsFragment : Fragment() {
         AppSettings.load(requireContext())
         swAutoEnable.isChecked = AppSettings.autoEnable
         swBootStart.isChecked = AppSettings.bootStart
+        swAutoCopyAddress.isChecked = AppSettings.autoCopyAddressEnabled
+        swUseTcpMode.isChecked = AppSettings.useTcpMode
 
         swAutoEnable.setOnCheckedChangeListener { _, c ->
             AppSettings.autoEnable = c
@@ -49,6 +55,14 @@ class SettingsFragment : Fragment() {
         }
         swBootStart.setOnCheckedChangeListener { _, c ->
             AppSettings.bootStart = c
+            AppSettings.save(requireContext())
+        }
+        swAutoCopyAddress.setOnCheckedChangeListener { _, c ->
+            AppSettings.autoCopyAddressEnabled = c
+            AppSettings.save(requireContext())
+        }
+        swUseTcpMode.setOnCheckedChangeListener { _, c ->
+            AppSettings.useTcpMode = c
             AppSettings.save(requireContext())
         }
 

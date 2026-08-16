@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import top.cbug.adbx.store.Settings
 import top.cbug.adbx.util.AdbHelper
+import top.cbug.adbx.util.BootLogger
 import top.cbug.adbx.util.WifiHelper
 
 /**
@@ -35,39 +36,44 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
             intent.action != Intent.ACTION_LOCKED_BOOT_COMPLETED) return
 
+        BootLogger.init(context)
+        BootLogger.append("boot received action=${intent.action}")
         try {
             Settings.load(context)
         } catch (_: Exception) { }
 
         if (!Settings.bootStart) {
             Log.d(TAG, "Boot completed — bootStart disabled, skipping")
+            BootLogger.append("boot start disabled")
             return
         }
 
         if (!Settings.autoEnable) {
             Log.d(TAG, "Boot completed — auto-enable disabled, skipping")
+            BootLogger.append("auto-enable disabled")
             return
         }
 
         val ssid = WifiHelper.getCurrentSsid(context)
-        Log.d(TAG, "Boot completed — current SSID='" + ssid + "'")
+        Log.d(TAG, "Boot completed — current SSID='$ssid'")
+        BootLogger.append("current ssid=$ssid")
         if (ssid.isBlank()) {
             Log.d(TAG, "Boot completed — empty SSID, skipping")
+            BootLogger.append("empty ssid skip")
             return
         }
 
         val trusted = Settings.isTrusted(ssid)
         if (trusted) {
-            Log.i(TAG, "Boot completed — trusted SSID " + ssid + ", enabling wireless ADB")
+            Log.i(TAG, "Boot completed — trusted SSID $ssid, enabling wireless ADB")
+            BootLogger.append("trusted ssid=$ssid enable")
             AdbHelper.enableWirelessAdb()
             WifiStateReceiver.recordLastTriggerFromBoot(context, ssid)
         } else {
-            Log.d(TAG, "Boot completed — non-trusted SSID " + ssid + ", leaving wireless ADB unchanged (Android handles disconnect)")
+            Log.d(TAG, "Boot completed — non-trusted SSID $ssid, leaving wireless ADB unchanged (Android handles disconnect)")
+            BootLogger.append("non-trusted ssid=$ssid skip")
         }
-        // Always start the persistent daemon so subsequent WiFi events
-        // (join / leave / BSSID change) are handled even when the user
-        // is not in the app. The service is idempotent — calling start
-        // on an already-running service is a no-op.
         TrustedWifiService.start(context)
+        BootLogger.append("boot flow done")
     }
 }

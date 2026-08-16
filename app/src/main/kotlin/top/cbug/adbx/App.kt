@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
 import top.cbug.adbx.store.Settings
+import top.cbug.adbx.util.BootLogger
 import top.cbug.adbx.util.LocaleHelper
 import top.cbug.adbx.util.XposedStatus
 
@@ -31,6 +32,7 @@ class App : Application() {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
         // Settings was already loaded in attachBaseContext; reload is a no-op.
         Settings.load(this)
+        BootLogger.init(this)
         // Always write the config mirror at startup so the LSPosed hook
         // running inside system_server (uid 1000) can read the trusted
         // SSID set the moment the app is installed. Without this the

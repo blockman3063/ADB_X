@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import top.cbug.adbx.MainActivity
 import top.cbug.adbx.R
 import top.cbug.adbx.util.AdbHelper
+import top.cbug.adbx.util.BootLogger
 
 /**
  * Status tab — Xposed card + 5 status indicators + ADB enable/disable.
@@ -28,7 +29,7 @@ import top.cbug.adbx.util.AdbHelper
 class StatusFragment : Fragment() {
 
     /** Plain-data snapshot the Activity pushes when status updates. */
-    data class UiModel(
+    data class StatusModel(
         val xposedTitle: String,
         val xposedSubtitle: String,
         val xposedChipText: String,
@@ -42,6 +43,7 @@ class StatusFragment : Fragment() {
         val localIp: String,
         val externalIp: String,
         val hasRoot: Boolean,
+        val adbMode: String,
     )
 
     private lateinit var cardXposedStatus: MaterialCardView
@@ -57,6 +59,11 @@ class StatusFragment : Fragment() {
     private lateinit var toggleAdb: MaterialButtonToggleGroup
     private lateinit var btnEnableAdb: MaterialButton
     private lateinit var btnDisableAdb: MaterialButton
+
+    private lateinit var cardBootLog: MaterialCardView
+    private lateinit var tvBootLog: TextView
+    private lateinit var btnClearBootLog: MaterialButton
+    private lateinit var btnToggleBootLog: MaterialButton
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -79,6 +86,11 @@ class StatusFragment : Fragment() {
         btnEnableAdb = view.findViewById(R.id.btnEnableAdb)
         btnDisableAdb = view.findViewById(R.id.btnDisableAdb)
 
+        cardBootLog = view.findViewById(R.id.cardBootLog)
+        tvBootLog = view.findViewById(R.id.tvBootLog)
+        btnClearBootLog = view.findViewById(R.id.btnClearBootLog)
+        btnToggleBootLog = view.findViewById(R.id.btnToggleBootLog)
+
         siAdb.setLabel(getString(R.string.si_label_adb))
         siPairing.setLabel(getString(R.string.si_label_pairing))
         siPort.setLabel(getString(R.string.si_label_port))
@@ -99,7 +111,7 @@ class StatusFragment : Fragment() {
     }
 
     /** Called by MainActivity when new status data is available. */
-    fun renderStatus(m: UiModel) {
+    fun renderStatus(m: StatusFragment.StatusModel) {
         if (!isAdded) return
         android.util.Log.d("ADB_X_StatusFr", "renderStatus: adb=" + m.adbState + " port='" + m.port + "'")
         // Xposed card
@@ -127,7 +139,12 @@ class StatusFragment : Fragment() {
             siAdb.setValue(m.error)
         } else if (m.adbState) {
             siAdb.setState(StatusIndicatorView.State.OK)
-            siAdb.setValue(getString(R.string.si_value_enabled))
+            val modeText = when (m.adbMode) {
+                "tls" -> getString(R.string.adb_mode_tls)
+                "tcp" -> getString(R.string.adb_mode_tcp)
+                else -> getString(R.string.adb_mode_unknown)
+            }
+            siAdb.setValue("${getString(R.string.si_value_enabled)} · $modeText")
         } else {
             siAdb.setState(StatusIndicatorView.State.OFF)
             siAdb.setValue(getString(R.string.si_value_disabled))
@@ -189,11 +206,35 @@ class StatusFragment : Fragment() {
             if (m.hasRoot) getString(R.string.si_value_available)
             else getString(R.string.si_value_unavailable)
         )
+
+        renderBootLog()
+    }
+
+    private fun renderBootLog() {
+        val lines = BootLogger.readLines()
+        if (lines.isEmpty()) {
+            tvBootLog.text = getString(R.string.boot_log_empty)
+            btnClearBootLog.visibility = View.GONE
+        } else {
+            tvBootLog.text = lines.joinToString("\n")
+            btnClearBootLog.visibility = View.VISIBLE
+        }
     }
 
     private fun setupListeners() {
         val act = activity as? MainActivity ?: return
         cardXposedStatus.setOnClickListener { act.showXposedHelpDialog() }
+
+        btnClearBootLog.setOnClickListener {
+            BootLogger.clear()
+            renderBootLog()
+        }
+        btnToggleBootLog.setOnClickListener {
+            cardBootLog.visibility = when (cardBootLog.visibility) {
+                View.GONE -> View.VISIBLE
+                else -> View.GONE
+            }
+        }
 
         toggleAdb.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
