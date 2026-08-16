@@ -154,11 +154,68 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Boot log card -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardBootLog"
+            style="?attr/materialCardViewElevatedStyle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            app:cardCornerRadius="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/section_boot_log"
+                        android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleBootLog"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/boot_log_hide" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnClearBootLog"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/boot_log_clear" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvBootLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="monospace"
+                    android:maxLines="8"
+                    android:ellipsize="end"
+                    tools:text="12:04:01.321 boot received action=android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Pairing shortcut card (default — when no pairing in progress) -->
         <!-- Trusted Wi-Fi auto-toggle status card. Shows whether
          TrustedWifiWatcher is armed and what the most recent SSID it
          acted on was. -->
-
 
         <!-- Pairing ACTIVE card (shown only when a pairing port is open) -->
 

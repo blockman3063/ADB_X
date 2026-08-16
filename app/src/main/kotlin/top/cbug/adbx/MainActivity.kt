@@ -85,6 +85,7 @@ class MainActivity : AppCompatActivity() {
     // Cached values for click-to-copy + cross-fragment reads.
     private var cachedLocalIp: String = ""
     private var cachedPort: String = ""
+    private var lastAutoCopiedAddress: String = ""
 
     // Latest status snapshot, used to re-render when the user switches tabs.
     data class StatusSnapshot(
@@ -97,6 +98,7 @@ class MainActivity : AppCompatActivity() {
         var localIp: String = "",
         var externalIp: String = "",
         var hasRoot: Boolean = false,
+        var adbMode: String = "",
         var xposed: XposedStatus.Info = XposedStatus.Info(
             state = XposedStatus.State.UNKNOWN, emptyList(), ""
         )
@@ -300,10 +302,12 @@ class MainActivity : AppCompatActivity() {
                     localIp = ip,
                     externalIp = extIp,
                     hasRoot = st.hasRoot,
+                    adbMode = st.mode,
                     xposed = xposed,
                 )
                 cachedLocalIp = ip
                 cachedPort = st.port
+                autoCopyAddressIfChanged()
 
                 withContext(Dispatchers.Main) {
                     pushStatusToActiveFragment()
@@ -335,8 +339,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun buildStatusUiModel(): StatusFragment.UiModel {
-        return StatusFragment.UiModel(
+    private fun buildStatusUiModel(): StatusFragment.StatusModel {
+        return StatusFragment.StatusModel(
             xposedTitle = getString(when (status.xposed.state) {
                 XposedStatus.State.ACTIVE   -> R.string.xposed_active_title
                 XposedStatus.State.INACTIVE -> R.string.xposed_inactive_title
@@ -351,9 +355,6 @@ class MainActivity : AppCompatActivity() {
                         R.string.xposed_inactive_subtitle_with_frame
                 XposedStatus.State.UNKNOWN  -> R.string.xposed_inactive_subtitle_no_frame
             }).let {
-                // INACTIVE subtitle uses %1$s for the framework-package list —
-                // inject the actual list. ACTIVE subtitle has no placeholders
-                // so we pass it through unchanged.
                 val args = status.xposed.frameworkPackages.joinToString(", ")
                 if (status.xposed.state == XposedStatus.State.ACTIVE) it
                 else getString(R.string.xposed_inactive_subtitle_with_frame, args)
@@ -373,6 +374,7 @@ class MainActivity : AppCompatActivity() {
             localIp = status.localIp,
             externalIp = status.externalIp,
             hasRoot = status.hasRoot,
+            adbMode = status.adbMode,
         )
     }
 
@@ -579,6 +581,7 @@ class MainActivity : AppCompatActivity() {
                     ssid = ssid,
                     localIp = localIp,
                     hasRoot = hasRoot,
+                    adbMode = "",
                     xposed = xposed,
                 )
                 cachedLocalIp = localIp
@@ -611,6 +614,27 @@ class MainActivity : AppCompatActivity() {
             getSharedPreferences(top.cbug.adbx.WifiStateReceiver.PREFS, android.content.Context.MODE_PRIVATE)
                 .getLong(top.cbug.adbx.WifiStateReceiver.KEY_MS, 0L)
         } catch (_: Throwable) { 0L }
+    }
+
+    // ---------------- Auto copy address on change ----------------
+
+    private fun autoCopyAddressIfChanged() {
+        if (!AppSettings.autoCopyAddressEnabled) return
+        val text = when {
+            cachedLocalIp.isNotEmpty() && cachedPort.isNotEmpty() -> "$cachedLocalIp:$cachedPort"
+            cachedLocalIp.isNotEmpty() -> cachedLocalIp
+            cachedPort.isNotEmpty() -> cachedPort
+            else -> return
+        }
+        if (text.isEmpty() || text == lastAutoCopiedAddress) return
+        lastAutoCopiedAddress = text
+        try {
+            copyToClipboard("ADB address", text)
+            toast(getString(R.string.msg_address_auto_copied, text))
+            Log.d(TAG, "auto copied address: $text")
+        } catch (_: Throwable) {
+            Log.w(TAG, "auto copy failed")
+        }
     }
 
     // ---------------- Misc helpers ----------------

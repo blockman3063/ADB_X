@@ -183,4 +183,14 @@
     <string name="wired_usb_state_on">ADB over USB is enabled</string>
     <string name="wired_usb_state_off">ADB over USB is disabled</string>
     <string name="wired_toggle_failed">USB ADB toggle failed (need root)</string>
+    <string name="msg_address_auto_copied">ADB address auto-copied: %1$s</string>
+    <string name="section_boot_log">Boot log</string>
+    <string name="boot_log_empty">No boot actions yet</string>
+    <string name="boot_log_clear">Clear</string>
+    <string name="boot_log_hide">Hide</string>
+    <string name="sw_auto_copy_address">Auto-copy ADB address</string>
+    <string name="sw_use_tcp_mode">Use TCP mode</string>
+    <string name="adb_mode_tls">TLS</string>
+    <string name="adb_mode_tcp">TCP</string>
+    <string name="adb_mode_unknown">ADB</string>
 </resources>
