@@ -131,7 +131,7 @@ jobs:
 
             ### Changelog
 
-            See https://github.com/blockman3063/ADB_X/compare/${{ steps.apk.previousVersionName }}...v${{ steps.apk.outputs.versionName }}
+            See https://github.com/blockman3063/ADB_X/releases
           files: app/build/outputs/apk/release/app-release.apk
           draft: false
           prerelease: false

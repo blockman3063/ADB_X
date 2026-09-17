@@ -19,12 +19,13 @@
 
 - **固定无线调试端口** — 摆脱 `adb pair` 每次随机端口
 - **实时配对码捕获** — 从 system_server hook 直接读取当前配对码,一键复制
-- **已保存 Wi-Fi 扫描** — 列出设备记住的所有网络
+- **已保存 Wi-Fi 扫描** — 列出设备记住的所有网络,分「已连接 / 已保存 / 可见」三段
 - **信任网络管理** — 勾选应自动开启 ADB 的 SSID
-- **连接信任 Wi-Fi 时自动开启 ADB** — 自动写入 `Settings.Global.ADB_WIFI_ENABLED`;
-  离开时自动关闭(可选)
+- **连接信任 Wi-Fi 时自动开启 ADB** — 自动写入 `Settings.Global.ADB_WIFI_ENABLED`
+- **有线(USB)页面** — 按序列号信任主机,USB ADB 与无线开关互不干扰
 - **中英双语界面** — 运行时切换
-- **无前台依赖** — 全部逻辑跑在 `system_server` LSPosed hook 内
+- **基本无需前台依赖** — 核心开关逻辑跑在 `system_server` LSPosed hook 内;
+  界面关闭后由一个轻量前台守护进程维持
 
 ## 环境要求
 
@@ -66,16 +67,18 @@ Hook 拦截 `SystemProperties.set` 对 `service.adb.tls.port` 和
 写入 `/data/local/tmp/adb_x_pairing_code`。App 读两个文件,渲染完整
 `adb pair host:port code` 命令,一键复制。
 
-### 自动开启 / 自动关闭
-`ConnectivityManager.NetworkCallback` 跑在 `system_server`。
-当连接的 Wi-Fi 命中信任 SSID 时,hook 设 `Settings.Global.ADB_WIFI_ENABLED = 1`;
-断开时(可选)清零。
+### 连接信任 Wi-Fi 时自动开启
+`ConnectivityManager.NetworkCallback` 同时跑在 `system_server`(经 LSPosed)
+和 App 进程内(前台守护进程 + 静态注册的 `WifiStateReceiver`)。
+当连接的 Wi-Fi 命中信任 SSID 时开启无线 ADB。
+断开时故意不做处理 —— adbd 会在 SSID 切换间保持端点存活,
+背着用户关掉 ADB 反而会切断正在进行的会话。
 
 ### 已保存 Wi-Fi 列表
-Hook 把 `WifiManager.getConfiguredNetworks()` 的结果 dump 到
-`/data/local/tmp/adb_x_wifi_list`。这是 Android 11+ 上唯一可行的途径 ——
-第三方 app 调 `getConfiguredNetworks()` 返回 0 条,system_server 才有完整
-可见性。
+Android 11+ 对第三方 app 隐藏了 `WifiManager.getConfiguredNetworks()`
+(直接返回空列表),因此改由 `system_server` 内的 hook 读取网络列表,
+再经 `Settings.Global` 的 `adb_x_wifi_list_*` 分片发布,App 端重组。
+在 settings provider 受限的 ROM 上回退到磁盘上的 marker 文件。
 
 ## 项目结构
 
@@ -87,34 +90,44 @@ ADB_X/
 │       ├── AndroidManifest.xml
 │       ├── assets/xposed_init
 │       ├── kotlin/top/cbug/adbx/
-│       │   ├── App.kt
-│       │   ├── BootReceiver.kt
-│       │   ├── MainActivity.kt          (单 Activity host)
+│       │   ├── App.kt                   (Application,加载设置)
+│       │   ├── MainActivity.kt          (单 Activity host,4 tab)
 │       │   ├── PairingActivity.kt       (全屏配对管理)
-│       │   ├── store/Settings.kt        (SharedPreferences + 同步文件)
-│       │   ├── ui/                      (3 Fragment + adapter)
+│       │   ├── BootLogger.kt            (App 内开机诊断日志)
+│       │   ├── BootReceiver.kt          (开机时评估信任 SSID)
+│       │   ├── WifiStateReceiver.kt     (Wi-Fi 状态变化时评估)
+│       │   ├── UsbStateReceiver.kt      (USB 插拔时评估)
+│       │   ├── PairingReceiver.kt       (无线调试发现广播)
+│       │   ├── TrustedWifiService.kt    (前台自动开关守护进程)
+│       │   ├── store/Settings.kt        (SharedPreferences + 配置镜像)
+│       │   ├── ui/                      (4 Fragment + adapter)
 │       │   │   ├── StatusFragment.kt
 │       │   │   ├── NetworkFragment.kt
+│       │   │   ├── WiredFragment.kt
 │       │   │   ├── SettingsFragment.kt
+│       │   │   ├── WifiSettingsActivity.kt
 │       │   │   ├── WifiAdapter.kt
 │       │   │   └── StatusIndicatorView.kt
 │       │   ├── util/                    (shell + ADB + Wi-Fi 工具)
 │       │   │   ├── AdbHelper.kt
 │       │   │   ├── LocaleHelper.kt
 │       │   │   ├── ShellUtils.kt
-│       │   │   └── WifiHelper.kt
+│       │   │   ├── WifiHelper.kt
+│       │   │   ├── WiredUsbHelper.kt
+│       │   │   └── XposedStatus.kt
 │       │   └── xposed/                  (LSPosed hook)
 │       │       ├── XposedInit.kt
-│       │       ├── AdbSystemHooks.kt    (system_server)
+│       │       ├── AdbSystemHooks.kt    (system_server + settings)
 │       │       └── SettingsHooks.kt     (设置 App)
 │       └── res/
-│           ├── layout/                  (3 Fragment + 2 Activity)
-│           ├── menu/bottom_nav.xml      (3 tab 底栏)
+│           ├── layout/                  (4 Fragment + 2 Activity)
+│           ├── menu/bottom_nav.xml      (4 tab 底栏)
 │           ├── values/                  (英文 fallback 字符串)
 │           ├── values-zh-rCN/           (简体中文)
 │           └── values-night/            (深色主题)
 ├── build.gradle.kts
 ├── module.prop                         (Xposed 模块元数据)
+├── scripts/bump_version.sh             (版本号与 tag 助手)
 ├── settings.gradle.kts
 └── gradle/wrapper/
 ```

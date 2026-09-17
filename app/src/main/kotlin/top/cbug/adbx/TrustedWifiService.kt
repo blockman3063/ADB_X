@@ -52,26 +52,38 @@ class TrustedWifiService : Service() {
         private const val CHANNEL_ID = "trusted_wifi_daemon"
         private const val NOTIF_ID = 1
 
+        /** Minimum gap between onCapabilitiesChanged-driven evaluations. */
+        private const val CAPS_THROTTLE_MS = 10_000L
+
         /**
          * Start the service if not already running. Safe to call from
          * receivers (boot / wifi state change / app foreground).
          */
         fun start(ctx: Context) {
+            val i = Intent(ctx, TrustedWifiService::class.java)
             try {
-                val i = Intent(ctx, TrustedWifiService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     ctx.startForegroundService(i)
                 } else {
                     ctx.startService(i)
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "start: ${t.message}")
+                // Android 12+ rejects foreground-service starts from the
+                // background (ForegroundServiceStartNotAllowedException).
+                // Log it and try the plain path; the statically registered
+                // WifiStateReceiver covers the SSID-change path on its own,
+                // so a rejected start is degraded, not fatal.
+                Log.w(TAG, "foreground start rejected (${t.javaClass.simpleName}): ${t.message}")
+                runCatching { ctx.startService(i) }
             }
         }
     }
 
     private var cm: ConnectivityManager? = null
     private var callback: ConnectivityManager.NetworkCallback? = null
+
+    /** Throttle clock for onCapabilitiesChanged — see the callback below. */
+    private var lastCapsFireMs = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -141,8 +153,15 @@ class TrustedWifiService : Service() {
                 WifiStateReceiver.fireOnce(this@TrustedWifiService)
             }
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
-                    WifiStateReceiver.fireOnce(this@TrustedWifiService)
+                if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return
+                // Throttled: this fires on every link-property change, and
+                // each fireOnce costs a broadcast round-trip plus a full
+                // trusted-SSID evaluation. One check per window is enough to
+                // catch an SSID change.
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastCapsFireMs < CAPS_THROTTLE_MS) return
+                lastCapsFireMs = now
+                WifiStateReceiver.fireOnce(this@TrustedWifiService)
             }
         }
         callback = cb

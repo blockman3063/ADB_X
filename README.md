@@ -23,12 +23,17 @@ foreground app or background service required.
 - **Fixed wireless-debugging port** — no more random port from `adb pair`
 - **Live pairing-code capture** — read the current pairing code straight
   from the system-server hook, copy to clipboard
-- **Saved-Wi-Fi scan** — list every Wi-Fi your device remembers
+- **Saved-Wi-Fi scan** — list every Wi-Fi your device remembers, split
+  into connected / saved / available sections
 - **Trusted networks** — tick the SSIDs that should re-enable ADB
 - **Auto-enable on trusted Wi-Fi** — flips `Settings.Global.ADB_WIFI_ENABLED`
-  on when you join one, off when you leave (optional)
+  on when you join one
+- **Wired (USB) tab** — trust a host by serial and arm ADB-over-USB
+  independently of the wireless toggle
 - **Bilingual UI** — English or Simplified Chinese, switchable at runtime
-- **Foreground-free** — all logic runs in `system_server` via LSPosed
+- **Mostly foreground-free** — the core toggling logic runs in
+  `system_server` via LSPosed; a lightweight foreground daemon keeps it
+  alive when the UI is closed
 
 ## Requirements
 
@@ -76,17 +81,22 @@ saved custom code is written to `/data/local/tmp/adb_x_pairing_code`.
 The app reads both files and renders the full
 `adb pair host:port code` command with a copy-to-clipboard button.
 
-### Auto-enable / auto-disable
-A `ConnectivityManager.NetworkCallback` runs inside `system_server`.
-When the active Wi-Fi matches one of the trusted SSIDs the hook sets
-`Settings.Global.ADB_WIFI_ENABLED = 1`; on disconnect, optionally
-clears it again.
+### Auto-enable on trusted Wi-Fi
+A `ConnectivityManager.NetworkCallback` runs in `system_server` (via
+LSPosed) and again in the app process (foreground daemon plus a
+statically registered `WifiStateReceiver`). When the active Wi-Fi matches
+one of the trusted SSIDs, wireless ADB is switched on. Disconnects are
+deliberately left to Android — adbd keeps its endpoint alive across SSID
+transitions, and disabling behind the user's back would drop a live
+session.
 
 ### Saved-Wi-Fi list
-The hook dumps `WifiManager.getConfiguredNetworks()` into
-`/data/local/tmp/adb_x_wifi_list`. This is the only path that works on
-Android 11+ where `getConfiguredNetworks()` returns 0 networks from
-third-party apps — system_server has full visibility that apps don't.
+Android 11+ hides `WifiManager.getConfiguredNetworks()` from third-party
+apps (it returns an empty list), so the hook inside `system_server` reads
+the networks and publishes them through `Settings.Global` in
+`adb_x_wifi_list_*` chunks. The app reassembles those chunks; an on-disk
+marker file is used as a fallback on ROMs where the settings provider is
+restricted.
 
 ## Project layout
 
@@ -98,34 +108,44 @@ ADB_X/
 │       ├── AndroidManifest.xml
 │       ├── assets/xposed_init
 │       ├── kotlin/top/cbug/adbx/
-│       │   ├── App.kt
-│       │   ├── BootReceiver.kt
-│       │   ├── MainActivity.kt          (single-activity host)
+│       │   ├── App.kt                   (Application, loads settings)
+│       │   ├── MainActivity.kt          (single-activity host, 4 tabs)
 │       │   ├── PairingActivity.kt       (full-screen pairing manager)
-│       │   ├── store/Settings.kt        (SharedPreferences + sync file)
-│       │   ├── ui/                      (3 fragments + adapters)
+│       │   ├── BootLogger.kt            (in-app boot diagnostic log)
+│       │   ├── BootReceiver.kt          (boot-time trusted-SSID evaluate)
+│       │   ├── WifiStateReceiver.kt     (Wi-Fi state change evaluate)
+│       │   ├── UsbStateReceiver.kt      (USB attach / detach evaluate)
+│       │   ├── PairingReceiver.kt       (wireless-debug discover action)
+│       │   ├── TrustedWifiService.kt    (foreground auto-toggle daemon)
+│       │   ├── store/Settings.kt        (SharedPreferences + config mirror)
+│       │   ├── ui/                      (4 fragments + adapters)
 │       │   │   ├── StatusFragment.kt
 │       │   │   ├── NetworkFragment.kt
+│       │   │   ├── WiredFragment.kt
 │       │   │   ├── SettingsFragment.kt
+│       │   │   ├── WifiSettingsActivity.kt
 │       │   │   ├── WifiAdapter.kt
 │       │   │   └── StatusIndicatorView.kt
 │       │   ├── util/                    (shell + ADB + Wi-Fi helpers)
 │       │   │   ├── AdbHelper.kt
 │       │   │   ├── LocaleHelper.kt
 │       │   │   ├── ShellUtils.kt
-│       │   │   └── WifiHelper.kt
+│       │   │   ├── WifiHelper.kt
+│       │   │   ├── WiredUsbHelper.kt
+│       │   │   └── XposedStatus.kt
 │       │   └── xposed/                  (LSPosed hooks)
 │       │       ├── XposedInit.kt
-│       │       ├── AdbSystemHooks.kt    (system_server)
+│       │       ├── AdbSystemHooks.kt    (system_server + settings)
 │       │       └── SettingsHooks.kt     (Settings app)
 │       └── res/
-│           ├── layout/                  (3 fragments + 2 activities)
-│           ├── menu/bottom_nav.xml      (3-tab navigation)
+│           ├── layout/                  (4 fragments + 2 activities)
+│           ├── menu/bottom_nav.xml      (4-tab navigation)
 │           ├── values/                  (English fallback strings)
 │           ├── values-zh-rCN/           (Simplified Chinese)
 │           └── values-night/            (dark theme)
 ├── build.gradle.kts
 ├── module.prop                         (Xposed module metadata)
+├── scripts/bump_version.sh             (version bump + tag helper)
 ├── settings.gradle.kts
 └── gradle/wrapper/
 ```

@@ -98,7 +98,7 @@ object XposedStatus {
             frameworks += "LSPosed (Zygisk)"
             hint.append("LSPosed Zygisk installed")
         }
-        val mgrPkgs = detectManagerPackages()
+        val mgrPkgs = detectManagerPackages(context)
         if (mgrPkgs.isNotEmpty()) {
             frameworks += mgrPkgs
             if (hint.isNotEmpty()) hint.append(" + ")
@@ -172,15 +172,35 @@ object XposedStatus {
         return probes.any { File(it).exists() }
     }
 
-    private fun detectManagerPackages(): List<String> {
+    /**
+     * Which Xposed manager apps are actually installed. Queries
+     * PackageManager rather than shelling out, so it works without root —
+     * that was the original intent of this stub, which previously built a
+     * candidate list and then discarded it. Reporting the real packages
+     * lets the Status card distinguish "framework installed" from
+     * "framework not detected".
+     */
+    @Suppress("DEPRECATION")
+    private fun detectManagerPackages(context: Context): List<String> {
         val candidates = listOf(
             "org.lsposed.manager",
             "de.robv.android.xposed.installer",
             "org.meowcat.edxposed.manager",
             "org.lsposed.lspatch"
         )
-        // Avoid shell command dependency for detection; just report install paths.
-        return emptyList()
+        return try {
+            val pm = context.packageManager
+            candidates.filter { pkg ->
+                try {
+                    pm.getApplicationInfo(pkg, 0)
+                    true
+                } catch (_: Throwable) {
+                    false
+                }
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
     }
 
     private fun isModuleEnabledForCurrentScope(): Boolean {

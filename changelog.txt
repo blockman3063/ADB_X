@@ -1,3 +1,25 @@
+# ADB_X v1.1.1
+
+## Fixes
+- Wi-Fi state receiver no longer double-finishes the goAsync pendingResult
+- Saved-network list is read through dumpsys wifi via the LSPosed hook
+- Corrected Xposed activation detection for the inactive state
+- Avoided a system_server main-thread ANR during pairing
+- Aligned the Xposed repo release title; handle immutable-tag races in CI
+
+## Changes
+- Wi-Fi list sections are foldable; saved / visible order swapped
+- Trusted-Wi-Fi and pairing cards moved from the Status tab to the Wireless tab
+- Added scripts/bump_version.sh with a duplicate-tag guard
+
+## Carried over from 1.1.0
+- Independent Wired (USB) tab: trust a device, auto-toggle USB ADB
+- Dedicated Wi-Fi manager screen with connected / saved / available sections
+- 4-tab bottom navigation with runtime EN / zh-CN switching
+- Persistent trusted-Wi-Fi auto-toggle daemon
+- Multi-tier pairing-port detection + PairingActivity
+- adbx installable as a KernelSU module for boot-time auto-toggle
+
 # ADB_X v1.0.0
 
 ## Initial release

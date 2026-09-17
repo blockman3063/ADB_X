@@ -25,7 +25,6 @@ import java.util.concurrent.atomic.AtomicInteger
 object AdbSystemHooks {
 
     private const val TAG = "ADB_X_SystemHooks"
-    private const val CONFIG_PATH = "/data/system/adb_x_config.txt"
     private const val SYNC_CONFIG_FILE = "/data/system/adb_x_config.txt"
     private val registered = AtomicBoolean(false)
 
@@ -37,10 +36,6 @@ object AdbSystemHooks {
     private val maxRetries = 8
     private val retryDelayMs = 10000L
 
-    /**
-     * TODO: document hook
-     * @param LoadPackageParam
-     */
     fun hook(lpparam: LoadPackageParam) {
         if (!registered.compareAndSet(false, true)) return
         XposedInit.log("[$TAG] Loading system_server hooks")
@@ -48,8 +43,14 @@ object AdbSystemHooks {
         // Best-effort hooks first — these don't need system services and
         // should always run regardless of whether connectivity/wifi come
         // up in time. They only need class loading, which is stable.
-        hookPairingDialog()
-        hookPairingFuzzy()
+        //
+        // Pass the injected class loader through: system_server's own
+        // framework classes resolve from the bootstrap loader, but OEM
+        // classes (com.oplus.adbd.*) may sit in a per-process loader that
+        // a null loader cannot see.
+        val cl = lpparam.classLoader
+        hookPairingDialog(cl)
+        hookPairingFuzzy(cl)
 
         try {
             val atClass = XposedHelpers.findClass("android.app.ActivityThread", null)
@@ -228,9 +229,10 @@ object AdbSystemHooks {
             // after a WiFi state change.
             try {
                 // dumpsys wifi is slow on some ROMs and can take >10 s.
-                // Run it on a worker thread so we never block the
-                // main handler / system_server main thread.
-                val done = java.util.concurrent.CountDownLatch(1)
+                // Fire-and-forget on a worker thread. installCallbacks()
+                // runs on the system_server main thread during
+                // handleLoadPackage, so awaiting the dump here would
+                // block that thread for up to the timeout and trip an ANR.
                 Thread {
                     try {
                         val dump = StringBuilder()
@@ -281,12 +283,12 @@ object AdbSystemHooks {
                         }
                         val source = if (dump.isNotEmpty()) "dumpsys-wifi" else "empty"
                         persistDump(context, dump, source)
-                    } catch (_: Throwable) { }
-                    done.countDown()
+                    } catch (t: Throwable) {
+                        XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
+                    }
                 }.start()
-                done.await(65, java.util.concurrent.TimeUnit.SECONDS)
             } catch (t: Throwable) {
-                XposedInit.log("[$TAG] WiFi dump failed: ${t.message}")
+                XposedInit.log("[$TAG] WiFi dump spawn failed: ${t.message}")
             }
 
             // 5. Pair-request watcher: app writes /data/local/tmp/adb_x_request_pair
@@ -378,7 +380,7 @@ object AdbSystemHooks {
     }
 
 
-    private fun hookPairingDialog() {
+    private fun hookPairingDialog(classLoader: ClassLoader?) {
         // Candidate classes across Android versions. Each entry is
         // (className, fieldNameHoldingPort). On match, the value is
         // persisted to /data/local/tmp/adb_x_pairing_port for the app
@@ -392,7 +394,7 @@ object AdbSystemHooks {
         )
         for ((className, fieldName) in candidates) {
             try {
-                val cls = XposedHelpers.findClass(className, null)
+                val cls = XposedHelpers.findClass(className, classLoader)
                 XposedHelpers.findField(cls, fieldName)
                 XposedHelpers.findAndHookConstructor(cls, Any::class.java, object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
@@ -422,7 +424,7 @@ object AdbSystemHooks {
      * regardless of which inner class OnePlus renamed in this
      * particular OxygenOS build.
      */
-    private fun hookPairingFuzzy() {
+    private fun hookPairingFuzzy(classLoader: ClassLoader?) {
         // Expanded candidate list covering AOSP + OnePlus renames.
         // Each entry is a (className, fieldName) pair; we walk fields
         // generically on every new instance instead of relying on a
@@ -445,7 +447,7 @@ object AdbSystemHooks {
         )
         for (className in candidates) {
             try {
-                val cls = XposedHelpers.findClass(className, null)
+                val cls = XposedHelpers.findClass(className, classLoader)
                 XposedHelpers.findAndHookConstructor(cls, Any::class.java, object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
