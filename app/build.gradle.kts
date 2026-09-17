@@ -11,8 +11,8 @@ android {
         applicationId = "top.cbug.adbx"
         minSdk = 30
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.1.1"
+        versionCode = 5
+        versionName = "1.1.2"
     }
 
     signingConfigs {
