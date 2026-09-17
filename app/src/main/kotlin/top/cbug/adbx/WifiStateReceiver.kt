@@ -44,7 +44,6 @@ import top.cbug.adbx.util.WifiHelper
 class WifiStateReceiver : BroadcastReceiver() {
 
 
-
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         if (action != WifiManager.NETWORK_STATE_CHANGED_ACTION &&
@@ -74,10 +73,23 @@ class WifiStateReceiver : BroadcastReceiver() {
 
             val trusted = AppSettings.isTrusted(ssid)
             if (trusted) {
-                Log.i(TAG, "trusted SSID $ssid, enabling wireless ADB")
-                BootLogger.append("trusted ssid=$ssid enable")
-                AdbHelper.enableWirelessAdb()
-                recordLastTrigger(context, ssid)
+                // Skip the write when wireless ADB is already on: each
+                // enableWirelessAdb() costs four su invocations, and this
+                // receiver fires on every Wi-Fi state change.
+                val alreadyOn = try {
+                    android.provider.Settings.Global.getInt(
+                        context.contentResolver, "adb_wifi_enabled", 0
+                    ) == 1
+                } catch (_: Throwable) { false }
+                if (alreadyOn) {
+                    Log.d(TAG, "trusted SSID $ssid but ADB already on, skipping write")
+                    BootLogger.append("trusted ssid=$ssid already-on skip")
+                } else {
+                    Log.i(TAG, "trusted SSID $ssid, enabling wireless ADB")
+                    BootLogger.append("trusted ssid=$ssid enable")
+                    AdbHelper.enableWirelessAdb()
+                    recordLastTrigger(context, ssid)
+                }
             } else {
                 Log.d(TAG, "non-trusted SSID $ssid, leaving wireless ADB unchanged (Android handles disconnect)")
                 BootLogger.append("non-trusted ssid=$ssid skip")

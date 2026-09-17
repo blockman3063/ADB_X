@@ -85,11 +85,6 @@ object WifiHelper {
      *  where every path fails — well past our refresh tick interval. */
     private const val SAVED_NETWORKS_BUDGET_MS = 4_000L
 
-    /**
-     * TODO: document getSavedNetworks
-     * @param Context
-     */
-
 
     // ---------------- Scan / signal / connection-state awareness ----------------
     //
@@ -126,8 +121,7 @@ object WifiHelper {
      *    look like
      *      ... what=CMD_ONESHOT_RSSI_POLL ... "SSID" bssid rssi=-39 f=5805 ...
      *    AOSP dumpsys output also surfaces connected-network RSSI
-     *    via `mWifiInfo SSID: "..." BSSID: ... RSSI: ...` — that one
-     *    we already parse in [parseConnectedNetwork].
+     *    via `mWifiInfo SSID: "..." BSSID: ... RSSI: ...`.
      *
      * Returns at most [limit] entries. We dedupe by BSSID so a
      * network polled multiple times keeps one row.
@@ -415,36 +409,6 @@ object WifiHelper {
     }
 
     /**
-     * Pure parser for the mWifiInfo line — exposed so [snapshotWifi]
-     * can parse it without re-running dumpsys.
-     */
-    private fun parseConnectedNetwork(dumpsysOutput: String): VisibleNetwork? {
-        for (line in dumpsysOutput.lines()) {
-            val t = line.trim()
-            if (!t.startsWith("mWifiInfo SSID")) {
-                if (line.contains("mWifiInfo")) Log.d(TAG, "skip: '" + t.take(40) + "'")
-                continue
-            }
-            Log.d(TAG, "parseConnected: hit line len=" + t.length)
-            val ssid = Regex("""SSID:\s*\"([^\"]*)\"""").find(t)?.groupValues?.getOrNull(1)
-            val bssid = Regex("""BSSID:\s*([0-9a-fA-F:]{17})""").find(t)?.groupValues?.getOrNull(1)
-            val rssi = Regex("""RSSI:\s*(-?\d+)""").find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            val freq = Regex("""(?:freq|frequency)\s*=\s*(\d+)""").find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            if (ssid.isNullOrBlank() || bssid.isNullOrBlank()) return null
-            val ssidClean = cleanSsid(ssid)
-            return VisibleNetwork(
-                ssid = ssidClean,
-                bssid = bssid,
-                rssi = rssi ?: -127,
-                freq = freq ?: 0,
-                is2g = freq != null && freq in 2400..2500,
-                lastSeenMs = System.currentTimeMillis()
-            )
-        }
-        return null
-    }
-
-    /**
      * Merge saved networks + visible networks + currently-connected
      * network into a single ordered list. The adapter then renders
      * section headers as it walks the list.
@@ -509,7 +473,7 @@ object WifiHelper {
     }
 
     fun getSavedNetworks(context: Context): List<SavedWifi> {
-        Log.d(TAG, "getSavedNetworks: rootAvailable=" + ShellUtils.hasRoot() + " contextNull=" + (context == null))
+        Log.d(TAG, "getSavedNetworks: rootAvailable=" + ShellUtils.hasRoot())
         val budgetStart = System.currentTimeMillis()
         fun remaining(): Long = SAVED_NETWORKS_BUDGET_MS - (System.currentTimeMillis() - budgetStart)
         // Probe order is most-likely-first:
@@ -569,7 +533,7 @@ object WifiHelper {
             xmlWifiUnavailable = true
         }
 
-        if (context != null && remaining() > 0) {
+        if (remaining() > 0) {
             val apiNetworks = try { getSavedNetworksApi(context) } catch (_: Exception) { emptyList() }
             if (apiNetworks.isNotEmpty()) {
                 Log.d(TAG, "Loaded " + apiNetworks.size + " networks via WifiManager API")
@@ -682,82 +646,6 @@ object WifiHelper {
         // app-process path is the only one that actually works on
         // modern Android, so this method is now a no-op stub.
         return emptyList()
-    }
-
-    /** Parse WifiConfigStore.xml format (used on API 30+)
-     *  Returns number of SSIDs found and populates result map. */
-    private fun extractSsidFromWifiConfigStoreXml(xml: String, result: MutableMap<String, String>): Int {
-        var count = 0
-
-        // Pattern 1: <string name="SSID">"MyWiFi"</string>  (quoted)
-        for (match in Regex("""<string\s+name="SSID">(.*?)</string>""").findAll(xml)) {
-            var raw = match.groupValues[1].trim()
-            raw = raw.removeSurrounding("\"").removeSurrounding("'").trim()
-            val s = cleanSsid(raw)
-            if (s.isNotBlank() && s !in result) {
-                result[s] = detectSecurity(xml, s)
-                count++
-            }
-        }
-        if (count > 0) return count
-
-        // Pattern 2: <string name="SSID">&quot;MyWiFi&quot;</string>
-        for (match in Regex("""<string\s+name="SSID">&quot;(.*?)&quot;</string>""").findAll(xml)) {
-            val s = cleanSsid(match.groupValues[1])
-            if (s.isNotBlank() && s !in result) {
-                result[s] = detectSecurity(xml, s)
-                count++
-            }
-        }
-
-        // Pattern 3: SSID="FreeWiFi" (without quotes inside value)
-        for (match in Regex("""<string\s+name="SSID">([^<&]+)</string>""").findAll(xml)) {
-            val s = cleanSsid(match.groupValues[1])
-            if (s.isNotBlank() && s !in result) {
-                result[s] = detectSecurity(xml, s)
-                count++
-            }
-        }
-
-        return count
-    }
-
-    /** Try to detect security type for a given SSID from the WifiConfigStore XML */
-    private fun detectSecurity(xml: String, ssid: String): String {
-        // Find the WifiConfiguration block containing this SSID
-        val escapedSsid = ssid.replace("\"", "&quot;")
-        val ssidIndex = xml.indexOf(escapedSsid)
-        if (ssidIndex < 0) return "Unknown"
-
-        val blockStart = xml.lastIndexOf("<WifiConfiguration>", ssidIndex)
-        val blockEnd = if (blockStart >= 0) xml.indexOf("</WifiConfiguration>", blockStart) else -1
-        val block = if (blockStart >= 0 && blockEnd > blockStart)
-            xml.substring(blockStart, blockEnd) else xml
-
-        return when {
-            block.contains("KeyMgmt=NONE") || block.contains("KeyMgmt\" value=\"NONE") ||
-                block.contains("open") || block.contains("owe") -> "Open"
-            block.contains("SAE") || block.contains("sae") -> "WPA3"
-            block.contains("WPA2") || block.contains("PSK") || block.contains("psk") -> "WPA2"
-            block.contains("WPA") || block.contains("wpa") -> "WPA"
-            block.contains("WEP") || block.contains("wep") -> "WEP"
-            block.contains("SuiteB") || block.contains("suiteb") -> "SuiteB"
-            else -> "Unknown"
-        }
-    }
-
-    /** Alternative: extract from NetworkList XML format */
-    private fun extractSsidFromNetworkListXml(xml: String, result: MutableMap<String, String>): Int {
-        var count = 0
-        // Look for <Network SSID="xxx">
-        for (match in Regex("""<Network\s+SSID\s*=\s*"([^"]+)""").findAll(xml)) {
-            val s = cleanSsid(match.groupValues[1])
-            if (s.isNotBlank() && s !in result) {
-                result[s] = "Unknown"
-                count++
-            }
-        }
-        return count
     }
 
     /** Use WifiManager.getConfiguredNetworks() API (deprecated but works on API 30-35)
@@ -893,10 +781,6 @@ object WifiHelper {
         return emptyList()
     }
 
-    /**
-     * TODO: document getCurrentSsid
-     * @param Context
-     */
     fun getCurrentSsid(context: Context): String {
         val wm = context.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return ""
         return try {
@@ -906,10 +790,6 @@ object WifiHelper {
         } catch (_: Throwable) { "" }
     }
 
-    /**
-     * TODO: document cleanSsid
-     * @param String?
-     */
     fun cleanSsid(ssid: String?): String {
         if (ssid == null) return ""
         var s = ssid.trim()
@@ -938,7 +818,7 @@ object WifiHelper {
             val wm = context.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return ""
             @Suppress("DEPRECATION")
             val info = wm.connectionInfo ?: return ""
-            val ipInt = info.ipAddress ?: return ""
+            val ipInt = info.ipAddress
             val ip = String.format("%d.%d.%d.%d",
                 ipInt and 0xff,
                 ipInt shr 8 and 0xff,

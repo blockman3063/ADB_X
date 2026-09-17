@@ -30,7 +30,7 @@ object AdbHelper {
     }
 
     /** Get current ADB port - prefers non-root method first */
-    fun getCurrentPort(context: Context?): String {
+    fun getCurrentPort(): String {
         val nr = getCurrentPortNonRoot()
         if (nr.isNotEmpty()) return nr
         if (!ShellUtils.hasRoot()) return ""
@@ -159,12 +159,10 @@ object AdbHelper {
 
         // 3. Try non-root via content resolver
         try {
-            if (context != null) {
-                val v = Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", 0)
-                if (v == 1) {
-                    Log.d(TAG, "adb_wifi_enabled=1 via ContentResolver")
-                    return true
-                }
+            val v = Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", 0)
+            if (v == 1) {
+                Log.d(TAG, "adb_wifi_enabled=1 via ContentResolver")
+                return true
             }
         } catch (_: Exception) { }
 
@@ -189,9 +187,6 @@ object AdbHelper {
         } catch (_: Throwable) { false }
     }
 
-    /**
-     * TODO: document enableWirelessAdb
-     */
     fun enableWirelessAdb(): Boolean {
         Log.d(TAG, "enableWirelessAdb")
         // On modern Android (14+, Rust adbd) the authoritative way is
@@ -208,9 +203,6 @@ object AdbHelper {
         return true
     }
 
-    /**
-     * TODO: document disableWirelessAdb
-     */
     fun disableWirelessAdb(): Boolean {
         Log.d(TAG, "disableWirelessAdb")
         ShellUtils.executeSu("settings put global adb_wifi_enabled 0", 1500)
@@ -219,10 +211,6 @@ object AdbHelper {
         return true
     }
 
-    /**
-     * TODO: document setFixedPort
-     * @param Int
-     */
     fun setFixedPort(port: Int): Boolean {
         ShellUtils.executeSu("settings put global adb_wifi_enabled 1", 1000)
         ShellUtils.executeSu("setprop service.adb.tcp.port " + port, 500)
@@ -232,10 +220,6 @@ object AdbHelper {
         return r.isSuccess()
     }
 
-    /**
-     * TODO: document setPairingCode
-     * @param String
-     */
     fun setPairingCode(code: String): Boolean {
         if (code.length !in 6..8 || !code.all { it.isDigit() }) return false
         writePairingCodeFile(code)
@@ -251,9 +235,6 @@ object AdbHelper {
             2000)
     }
 
-    /**
-     * TODO: document readPairingCode
-     */
     fun readPairingCode(): String {
         // 1. Direct file read
         try {
@@ -289,6 +270,36 @@ object AdbHelper {
     }
 
     /**
+     * Lightweight marker-only probe. Reads the hook-written
+     * /data/local/tmp/adb_x_pairing_port and returns the port when the
+     * file is fresh. Touches no su and spawns no process, so it is cheap
+     * enough for a UI polling loop — unlike [getPairingPort], whose
+     * fallback chain shells out to dumpsys.
+     *
+     * The marker is ignored if older than [PORT_MARKER_TTL_MS] — Android
+     * expires the ephemeral pairing port after ~120 s of inactivity, and
+     * a stale value would otherwise keep the "配对进行中" card on screen
+     * forever.
+     */
+    fun peekPairingMarker(): String {
+        return try {
+            val f = File("/data/local/tmp/adb_x_pairing_port")
+            if (!f.exists() || !f.canRead()) return ""
+            val ageMs = System.currentTimeMillis() - f.lastModified()
+            if (ageMs > PORT_MARKER_TTL_MS) {
+                Log.d(TAG, "pairing marker aged ${ageMs}ms, ignoring")
+                return ""
+            }
+            val port = f.readText().trim()
+            if (port.isNotEmpty() && port != "0" && port.all { it.isDigit() }
+                && port.toInt() in 1024..65535) {
+                Log.d(TAG, "pairing port via /data/local/tmp marker: $port (age ${ageMs}ms)")
+                port
+            } else ""
+        } catch (_: Throwable) { "" }
+    }
+
+    /**
      * Read the temporary ADB pairing port. Multiple strategies because no
      * single API is reliable across ROMs / Android versions:
      *   1. Marker file written by the LSPosed hook (system_server) at the
@@ -305,27 +316,18 @@ object AdbHelper {
      * Returns the empty string when nothing usable is found.
      */
     fun getPairingPort(): String {
-        // 1. Hook-written marker file (system_server can write here, app can read).
-        //    The marker is ignored if older than 5 min — Android expires
-        //    the ephemeral pairing port after ~120 s of inactivity, and a
-        //    stale value would otherwise keep the "配对进行中" card on
-        //    screen forever.
-        try {
-            val f = File("/data/local/tmp/adb_x_pairing_port")
-            if (f.exists() && f.canRead()) {
-                val ageMs = System.currentTimeMillis() - f.lastModified()
-                if (ageMs > PORT_MARKER_TTL_MS) {
-                    Log.d(TAG, "pairing marker aged " + ageMs + "ms, ignoring")
-                } else {
-                    val port = f.readText().trim()
-                    if (port.isNotEmpty() && port != "0" && port.all { it.isDigit() }
-                        && port.toInt() in 1024..65535) {
-                        Log.d(TAG, "pairing port via /data/local/tmp marker: " + port + " (age " + ageMs + "ms)")
-                        return port
-                    }
-                }
-            }
-        } catch (_: Throwable) { }
+        // 1. Hook-written marker file, via the cheap probe above.
+        val marker = peekPairingMarker()
+        if (marker.isNotEmpty()) return marker
+
+        // Every remaining strategy shells out through su. Without root
+        // there is nothing to gain: executeSu() walks all four SU_PATHS
+        // entries and burns the full timeout on each, so the probes below
+        // could cost ~12 s per call — and this runs on every refresh tick.
+        if (!ShellUtils.hasRoot()) {
+            Log.d(TAG, "getPairingPort: no root, skipping dumpsys fallbacks")
+            return ""
+        }
 
         // 2. dumpsys wifi — match ONLY pairing-specific lines. We must
         //    avoid "adb tcp" / "tls port" because those are present in the
@@ -398,9 +400,6 @@ object AdbHelper {
         } catch (_: Throwable) { }
     }
 
-    /**
-     * TODO: document clearPairingCode
-     */
     fun clearPairingCode() {
         ShellUtils.executeSu("rm -f /data/local/tmp/adb_x_pairing_code", 1000)
     }
@@ -415,14 +414,12 @@ object AdbHelper {
     )
 
     /**
-     * TODO: document getFullStatus
-     * @param Context
      * (suspend function)
      */
     suspend fun getFullStatus(context: Context): AdbStatus = withContext(Dispatchers.IO) {
         val hasRoot = ShellUtils.hasRoot()
         val enabled = getCurrentState(context)
-        val port = getCurrentPort(context)
+        val port = getCurrentPort()
         val pairingPort = getPairingPort()
         val pairingCode = readPairingCode()
         val mode = detectAdbMode(port)
@@ -495,20 +492,18 @@ object AdbHelper {
         // themselves, which goes through the system-level IAdbManager
         // and shows the dialog. We don't need any special permission to
         // start an Activity from our own context.
-        if (ctx != null) {
-            try {
-                val devIntent = Intent(
-                    Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
-                ).addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
-                )
-                ctx.startActivity(devIntent)
-                Log.d(TAG, "triggerPairing: opened Developer Options via Settings Intent")
-                return true
-            } catch (t: Throwable) {
-                Log.w(TAG, "triggerPairing: Settings Intent fallback failed: " + t.message)
-            }
+        try {
+            val devIntent = Intent(
+                Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
+            ).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+            )
+            ctx.startActivity(devIntent)
+            Log.d(TAG, "triggerPairing: opened Developer Options via Settings Intent")
+            return true
+        } catch (t: Throwable) {
+            Log.w(TAG, "triggerPairing: Settings Intent fallback failed: " + t.message)
         }
         Log.w(TAG, "triggerPairing: all attempts failed")
         return false

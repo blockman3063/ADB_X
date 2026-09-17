@@ -43,10 +43,6 @@ object Settings {
     private var trustedSsids: MutableSet<String> = mutableSetOf()
     private var trustedUsbSerials: MutableSet<String> = mutableSetOf()
 
-    /**
-     * TODO: document load
-     * @param Context
-     */
     fun load(context: Context) {
         val p = prefs(context)
         fixedPortEnabled = p.getBoolean(KEY_FIXED_PORT_ENABLED, false)
@@ -64,29 +60,17 @@ object Settings {
         useTcpMode = p.getBoolean(KEY_USE_TCP_MODE, false)
     }
 
-    /**
-     * TODO: document isTrusted
-     * @param String
-     */
     fun isTrusted(ssid: String): Boolean {
         val clean = sanitizeSsid(ssid)
         if (clean.isBlank()) return false
         return trustedSsids.contains(clean)
     }
 
-    /**
-     * TODO: document addTrusted
-     * @param String
-     */
     fun addTrusted(ssid: String) {
         val clean = sanitizeSsid(ssid)
         if (clean.isNotBlank()) trustedSsids.add(clean)
     }
 
-    /**
-     * TODO: document removeTrusted
-     * @param String
-     */
     fun removeTrusted(ssid: String) {
         trustedSsids.remove(sanitizeSsid(ssid))
     }
@@ -150,12 +134,9 @@ object Settings {
      *  read-restricted on a heavily-customised ROM. Runs on a
      *  background thread - do NOT call from main thread. */
     private fun syncConfigToFile() {
-        val ctx = top.cbug.adbx.App.appContext
-        // Settings.Global requires WRITE_SECURE_SETTINGS, which we
-        // cannot grant as a third-party APK. Skip that path entirely
-        // and rely on the world-readable mirror — but write it to
-        // /data/local/tmp which is the only path we can touch from
-        // app uid without going through su.
+        // Settings.Global requires WRITE_SECURE_SETTINGS, which a
+        // third-party APK cannot hold, so the Settings.Global path is
+        // skipped entirely and the mirror file is the only channel.
         syncConfigToFileMirror()
     }
 
@@ -201,7 +182,7 @@ object Settings {
 
     private fun sanitizeSsid(ssid: String): String {
         var s = ssid.trim()
-        if (s.startsWith(""") && s.endsWith(""") && s.length >= 2) s = s.substring(1, s.length - 1)
+        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) s = s.substring(1, s.length - 1)
         return s
     }
 }

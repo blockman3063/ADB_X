@@ -6,10 +6,6 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 
 object SettingsHooks {
 
-    /**
-     * TODO: document hook
-     * @param LoadPackageParam
-     */
     fun hook(lpparam: LoadPackageParam) {
         XposedInit.log("SettingsHooks: loading into com.android.settings")
         hookPairingDialog(lpparam)

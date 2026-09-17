@@ -42,26 +42,14 @@ class StatusIndicatorView @JvmOverloads constructor(
         tvValue = findViewById(R.id.si_value)
     }
 
-    /**
-     * TODO: document setLabel
-     * @param CharSequence
-     */
     fun setLabel(text: CharSequence) {
         tvLabel.text = text
     }
 
-    /**
-     * TODO: document setValue
-     * @param CharSequence
-     */
     fun setValue(text: CharSequence) {
         tvValue.text = text
     }
 
-    /**
-     * TODO: document setState
-     * @param State
-     */
     fun setState(state: State) {
         val (dotColor, bgColor) = when (state) {
             State.OK -> R.color.status_ok to R.color.status_active_bg
