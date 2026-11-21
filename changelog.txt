@@ -1,3 +1,44 @@
+# ADB_X v1.2.0
+
+## Fixes (architecture — UI now matches reality)
+- Wireless ADB on/off, pairing-code save, and boot enable now verify the real
+  outcome (read back Settings.Global / file) instead of returning true blindly.
+- Pairing port is read from `dumpsys adb` (adb_wifi.tls_port) — a real system
+  data source that needs no system_server hook. PairingReceiver now writes via
+  root instead of a direct File.writeText() that always failed.
+- "Start pairing" no longer lies: it reports whether a dialog opened vs. only
+  opening Developer Options for manual pairing.
+- Pairing countdown decrements for real; PairingActivity uses the LAN IP (the
+  public IP made adb pair impossible).
+- Fixed-port switch now applies/restores the port; "Recent" WiFi sort actually
+  sorts by last-seen; boot-start installs the KernelSU boot module.
+- Trusted-WiFi / boot auto-enable only record a trigger when ADB really turned on.
+- Xposed status card now distinguishes "system hook working" from "only this
+  app process injected".
+- Removed unreliable pairing-port sources (`dumpsys wifi`, `service.adb.*`
+  properties) that left a stale port 3000 showing as an active session forever.
+- "Start pairing" now requires adbd to report a live `adb_wifi.tls_port`
+  before claiming a dialog opened; otherwise it honestly opens Developer
+  Options for manual pairing.
+- Fixed-port writes are read back and verified before reporting success.
+- Boot-start switch self-heals: if the KernelSU boot module is missing it is
+  reinstalled automatically, or the switch is turned off if repair fails.
+- Corrected the trusted-WiFi subtitle that wrongly said "disabled in Settings"
+  when the device was simply not connected to any Wi-Fi network.
+
+# ADB_X v1.1.2
+
+## Changes
+- Wired (USB) trust now uses ADB host-key fingerprints (AOSP MD5 format) from
+  /data/misc/adb/adb_keys instead of USB serial / VID:PID. A phone acting as a
+  USB device cannot read its host's descriptors, so the old approach could never
+  identify the connected PC. Trust is explicitly to an ADB key, not a machine.
+- Wired UI lists authorized host keys with their fingerprints; revoking USB
+  debugging authorizations in system Settings now lapses our trust too.
+- USB connect detection moved to a dynamic receiver in the foreground daemon
+  (POWER_CONNECTED / USB_STATE), since those broadcasts cannot be received by a
+  static receiver on modern Android.
+
 # ADB_X v1.1.1
 
 ## Fixes

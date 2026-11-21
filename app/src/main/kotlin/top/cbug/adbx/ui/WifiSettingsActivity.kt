@@ -377,9 +377,11 @@ class WifiSettingsActivity : androidx.appcompat.app.AppCompatActivity() {
             )
         val available = allItems.filter { !it.isSaved && matches(it) }
             .sortedByDescending { if (it.signalDbm <= -127) -999 else it.signalDbm }
-        val savedFinal = if (sortMode == 2)
-            saved.sortedByDescending { if (it.signalDbm <= -127) -999 else it.signalDbm }
-        else saved
+        val savedFinal = when (sortMode) {
+            2 -> saved.sortedByDescending { if (it.signalDbm <= -127) -999 else it.signalDbm }
+            3 -> saved.sortedByDescending { if (it.lastSeenMs < 0) 0L else it.lastSeenMs }
+            else -> saved // 1 = alphabetical (already applied above)
+        }
 
         val adapterRows = mutableListOf<WifiAdapter.Row>()
 

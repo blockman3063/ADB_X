@@ -67,8 +67,12 @@ class BootReceiver : BroadcastReceiver() {
         if (trusted) {
             Log.i(TAG, "Boot completed — trusted SSID $ssid, enabling wireless ADB")
             BootLogger.append("trusted ssid=$ssid enable")
-            AdbHelper.enableWirelessAdb()
-            WifiStateReceiver.recordLastTriggerFromBoot(context, ssid)
+            val ok = AdbHelper.enableWirelessAdb()
+            if (ok) {
+                WifiStateReceiver.recordLastTriggerFromBoot(context, ssid)
+            } else {
+                BootLogger.append("boot enable FAILED (no root?)")
+            }
         } else {
             Log.d(TAG, "Boot completed — non-trusted SSID $ssid, leaving wireless ADB unchanged (Android handles disconnect)")
             BootLogger.append("non-trusted ssid=$ssid skip")

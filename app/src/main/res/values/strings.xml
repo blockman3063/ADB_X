@@ -21,6 +21,8 @@
     <string name="xposed_title">Xposed framework</string>
     <string name="xposed_active_title">Module active</string>
     <string name="xposed_active_subtitle">Module loaded into this app process by LSPosed</string>
+    <string name="xposed_active_subtitle_working">System hook working — Wi-Fi scan and pairing-code capture active</string>
+    <string name="xposed_active_subtitle_partial">Only this app process is injected; system-level hook not confirmed. Some features need root or Developer-options pairing.</string>
     <string name="xposed_inactive_title">Module not active</string>
     <string name="xposed_inactive_subtitle_no_frame">No Xposed framework detected — install LSPosed and enable this module in scope</string>
     <string name="xposed_inactive_subtitle_with_frame">Framework installed (%1$s) but the module has not loaded into this process. Enable scope and reboot.</string>
@@ -47,6 +49,9 @@
     <string name="pairing_hint_idle">Tap the right button to start a new pairing</string>
     <string name="btn_start_pairing">Start pairing</string>
     <string name="msg_pair_requested">Pairing requested, waiting for port…</string>
+    <string name="msg_pair_started">Pairing dialog opened — enter the code shown on the phone</string>
+    <string name="msg_pair_manual">Opened Developer Options — tap “Pair device with Wi-Fi”, then enter the code here</string>
+    <string name="msg_pair_failed">Could not start pairing — open Developer Options manually</string>
     <string name="section_pairing_code">Pairing code</string>
     <string name="section_auto">Automation</string>
     <string name="section_settings">Settings</string>
@@ -62,6 +67,8 @@
     <string name="btn_disable_adb">Disable ADB</string>
     <string name="sw_auto_enable">Auto-enable on trusted WiFi</string>
     <string name="sw_boot_start">Auto-start on boot</string>
+    <string name="msg_boot_module_ok">Boot module installed — trusted Wi-Fi will be evaluated at boot</string>
+    <string name="msg_boot_module_fail">Boot module install failed (needs KernelSU/root) — on-boot auto-start may not fire</string>
     <string name="wifi_settings_title">Wi-Fi settings</string>
     <string name="wifi_search_hint">Search networks</string>
     <string name="wifi_no_match">No matching networks</string>
@@ -75,7 +82,7 @@
     <string name="wifi_manage">Manage Wi-Fi</string>
     <string name="wifi_summary_fmt">Showing %1$d of %2$d</string>
     <string name="section_wifi">Saved WiFi networks</string>
-    <string name="btn_refresh_wifi">Refresh list</string>
+    <string name="btn_refresh_wifi">Manage Wi-Fi list</string>
     <string name="wifi_empty_hint">No saved networks yet. Tap refresh to scan.</string>
     <string name="wifi_trusted_label">Trusted</string>
     <string name="wifi_count_label">%1$d networks</string>
@@ -143,7 +150,7 @@
     <!-- Trusted Wi-Fi auto-toggle card -->
     <string name="section_trusted_wifi">Trusted Wi-Fi</string>
     <string name="trusted_wifi_status_armed">Auto-toggle armed · current SSID %1$s is %2$s</string>
-    <string name="trusted_wifi_status_disabled">Auto-toggle armed but disabled in Settings</string>
+    <string name="trusted_wifi_status_disabled">Auto-toggle armed · not connected to WiFi</string>
     <string name="trusted_wifi_status_no_ssids">Auto-toggle armed · no trusted networks yet</string>
     <string name="trusted_wifi_status_not_armed">Auto-toggle off</string>
     <string name="trusted_wifi_trusted">trusted</string>
@@ -163,21 +170,24 @@
     <string name="trusted_wifi_notif_text">Watching the connected Wi-Fi to toggle wireless ADB</string>
     <string name="pairing_trigger_now">Trigger pairing dialog</string>
 
-    <!-- Wired (USB) device auto-toggle card -->
+    <!-- Wired (USB) ADB-host-key trust card -->
     <string name="section_wired">Wired USB</string>
-    <string name="wired_status_no_devices">No USB device connected</string>
-    <string name="wired_status_devices_untrusted">%1$d device(s) connected · none trusted</string>
-    <string name="wired_status_device_trusted">Device %1$s trusted · auto-toggle armed</string>
+    <!-- Kept key name for the empty-list view IDs used by the layout -->
+    <string name="wired_status_no_devices">No authorized ADB host keys found</string>
+    <string name="wired_status_no_keys">No authorized ADB host keys found</string>
+    <string name="wired_status_keys_untrusted">%1$d authorized key(s) · none trusted</string>
+    <string name="wired_status_key_trusted">Trusted ADB key present · auto-toggle armed</string>
     <string name="wired_status_disabled">Auto-toggle off</string>
     <string name="wired_device_label">Vendor %1$s · Product %2$s</string>
     <string name="wired_device_serial_unknown">Unknown serial</string>
-    <string name="wired_action_trust">Trust this device</string>
-    <string name="wired_action_untrust">Untrust</string>
+    <string name="wired_key_no_comment">No comment</string>
+    <string name="wired_action_trust">Trust all keys</string>
+    <string name="wired_action_untrust">Untrust all</string>
     <string name="wired_action_trusted">Trusted</string>
-    <string name="wired_help">When you connect a USB device you trust, the app remembers its serial and toggles USB ADB automatically. Toggle what you want, then tap Trust.</string>
-    <string name="wired_auto_enable_summary">Auto-enable ADB on trusted devices</string>
-    <string name="wired_auto_disable_summary">Auto-disable ADB when no trusted device is connected</string>
-    <string name="wired_section_devices">Connected devices</string>
+    <string name="wired_help">Trust is tied to an ADB host key (its MD5 fingerprint), not to a physical computer. A phone cannot identify the PC on a USB cable — Android only knows keys you previously approved. Tap a fingerprint to trust it; on connect, if a trusted key is still authorized, USB ADB is switched on and the usual authorization prompt still decides per-PC access. Reinstalling the OS or regenerating the PC key changes its identity.</string>
+    <string name="wired_auto_enable_summary">Auto-enable ADB when a trusted key is authorized</string>
+    <string name="wired_auto_disable_summary">Auto-disable ADB when USB is disconnected</string>
+    <string name="wired_section_devices">Authorized ADB host keys</string>
     <string name="wired_action_toggle_on">Enable ADB now</string>
     <string name="wired_action_toggle_off">Disable ADB now</string>
     <string name="wired_usb_state_on">ADB over USB is enabled</string>

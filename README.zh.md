@@ -22,7 +22,8 @@
 - **已保存 Wi-Fi 扫描** — 列出设备记住的所有网络,分「已连接 / 已保存 / 可见」三段
 - **信任网络管理** — 勾选应自动开启 ADB 的 SSID
 - **连接信任 Wi-Fi 时自动开启 ADB** — 自动写入 `Settings.Global.ADB_WIFI_ENABLED`
-- **有线(USB)页面** — 按序列号信任主机,USB ADB 与无线开关互不干扰
+- **有线(USB)页面** — 按 MD5 指纹信任已授权的 ADB 主机密钥,USB ADB 与无线开关互不干扰。
+  信任对象是 ADB 密钥而非物理电脑 —— 界面里已明确说明。
 - **中英双语界面** — 运行时切换
 - **基本无需前台依赖** — 核心开关逻辑跑在 `system_server` LSPosed hook 内;
   界面关闭后由一个轻量前台守护进程维持
@@ -96,7 +97,7 @@ ADB_X/
 │       │   ├── BootLogger.kt            (App 内开机诊断日志)
 │       │   ├── BootReceiver.kt          (开机时评估信任 SSID)
 │       │   ├── WifiStateReceiver.kt     (Wi-Fi 状态变化时评估)
-│       │   ├── UsbStateReceiver.kt      (USB 插拔时评估)
+│       │   ├── UsbStateReceiver.kt      (USB 连接事件 + 受信任密钥评估)
 │       │   ├── PairingReceiver.kt       (无线调试发现广播)
 │       │   ├── TrustedWifiService.kt    (前台自动开关守护进程)
 │       │   ├── store/Settings.kt        (SharedPreferences + 配置镜像)
@@ -113,7 +114,7 @@ ADB_X/
 │       │   │   ├── LocaleHelper.kt
 │       │   │   ├── ShellUtils.kt
 │       │   │   ├── WifiHelper.kt
-│       │   │   ├── WiredUsbHelper.kt
+│       │   │   ├── AdbKeyHelper.kt      (读取 adb_keys,计算 AOSP 同款 MD5 指纹)
 │       │   │   └── XposedStatus.kt
 │       │   └── xposed/                  (LSPosed hook)
 │       │       ├── XposedInit.kt

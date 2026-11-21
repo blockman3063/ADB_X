@@ -87,8 +87,16 @@ class WifiStateReceiver : BroadcastReceiver() {
                 } else {
                     Log.i(TAG, "trusted SSID $ssid, enabling wireless ADB")
                     BootLogger.append("trusted ssid=$ssid enable")
-                    AdbHelper.enableWirelessAdb()
-                    recordLastTrigger(context, ssid)
+                    // Only record a trigger when the action actually
+                    // succeeded — otherwise the UI lies about a trigger
+                    // that never turned ADB on.
+                    val ok = AdbHelper.enableWirelessAdb()
+                    if (ok) {
+                        recordLastTrigger(context, ssid)
+                    } else {
+                        BootLogger.append("trusted ssid=$ssid enable FAILED (no root?)")
+                        Log.w(TAG, "enableWirelessAdb failed for trusted $ssid")
+                    }
                 }
             } else {
                 Log.d(TAG, "non-trusted SSID $ssid, leaving wireless ADB unchanged (Android handles disconnect)")

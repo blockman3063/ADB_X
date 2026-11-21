@@ -78,10 +78,13 @@
            </intent-filter>
        </receiver>
 
-       <!-- USB device attach / detach — used by the Wired tab to
-            auto-toggle USB ADB on trusted hosts. The system delivers
-            these broadcasts without permissions, so no extras are
-            needed beyond the receiver being registered. -->
+       <!-- Wired-tab USB auto-toggle.
+            USB_DEVICE_ATTACHED/DETACHED are on Android's manifest-broadcast
+            exemption list but only fire when the phone acts as USB HOST (OTG).
+            The phone-as-DEVICE (plugged into a PC) connect signal comes from
+            ACTION_POWER_CONNECTED / ACTION_USB_STATE, which must be registered
+            dynamically — TrustedWifiService does that while it is alive.
+            The internal actions are sent by the service and by the UI. -->
        <receiver
            android:name=".UsbStateReceiver"
            android:exported="false">
@@ -89,6 +92,8 @@
                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
                <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
                <action android:name="top.cbug.adbx.action.USB_EVAL" />
+               <action android:name="top.cbug.adbx.action.USB_CONNECTED" />
+               <action android:name="top.cbug.adbx.action.USB_DISCONNECTED" />
            </intent-filter>
        </receiver>
 

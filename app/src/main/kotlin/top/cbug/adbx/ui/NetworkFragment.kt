@@ -77,6 +77,11 @@ class NetworkFragment : Fragment() {
     private var lastPairingCode: String = ""
     private var lastLocalIp: String = ""
     private var lastExternalIp: String = ""
+    // When the current pairing session was first seen. Used to render a
+    // real countdown instead of a frozen "120 s" constant. Android
+    // expires an ephemeral pairing port after ~120 s.
+    private var pairingSessionStartMs = 0L
+    private val pairingSessionTtlMs = 120_000L
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -136,6 +141,13 @@ class NetworkFragment : Fragment() {
         swFixedPort.setOnCheckedChangeListener { _, checked ->
             AppSettings.fixedPortEnabled = checked
             AppSettings.save(requireContext())
+            // Make the switch actually do something: enabling applies the
+            // current port, disabling restores the default ADB port. Before
+            // this, the toggle only stored a local flag and did nothing.
+            val target = if (checked) {
+                etPort.text?.toString()?.trim()?.toIntOrNull() ?: AppSettings.fixedPort
+            } else 5555
+            (activity as? MainActivity)?.applyFixedPort(target)
         }
 
         btnApplyPort.setOnClickListener {
@@ -168,7 +180,7 @@ class NetworkFragment : Fragment() {
         }
 
         // Pairing shortcut opens the dedicated PairingActivity
-        cardPairingShortcut.setOnClickListener { act ->
+        cardPairingShortcut.setOnClickListener {
             (activity as? MainActivity)?.openPairingActivity()
         }
 
@@ -307,10 +319,14 @@ class NetworkFragment : Fragment() {
         adbEnabled: Boolean,
     ) {
         if (!isAdded) return
+        val previousPort = lastPairingPort
         lastPairingPort = pairingPort
         lastPairingCode = pairingCode
         lastLocalIp = localIp
         lastExternalIp = externalIp
+        if (pairingPort != previousPort && pairingPort.isNotBlank()) {
+            pairingSessionStartMs = System.currentTimeMillis()
+        }
 
         val hintText = when {
             pairingCode.isNotBlank() ->
@@ -357,7 +373,10 @@ class NetworkFragment : Fragment() {
             act.copyToClipboard("adb pair command", cmd)
             act.toast(getString(R.string.msg_copied, cmd))
         }
-        tvPairingCountdown.text = getString(R.string.pairing_expires_fmt, 120)
+        val leftSec = if (pairingSessionStartMs == 0L) 120 else ((pairingSessionTtlMs -
+                (System.currentTimeMillis() - pairingSessionStartMs)) / 1000L)
+            .coerceAtLeast(0).toInt()
+        tvPairingCountdown.text = getString(R.string.pairing_expires_fmt, leftSec)
     }
 
     private fun renderPairingHint(hintText: String) {
@@ -378,31 +397,30 @@ class NetworkFragment : Fragment() {
      */
     private fun triggerInAppPairing() {
         try {
-            val ok = AdbHelper.triggerPairing(requireContext())
-            if (ok) {
-                android.widget.Toast.makeText(
-                    requireContext(),
-                    R.string.msg_pair_requested,
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
-                tvPairingHint.text = getString(R.string.msg_pair_requested)
-            } else {
-                android.widget.Toast.makeText(
-                    requireContext(),
-                    "Trigger failed — try Developer Options",
-                    android.widget.Toast.LENGTH_LONG,
-                ).show()
+            when (AdbHelper.startPairing(requireContext())) {
+                is AdbHelper.PairingStart.Started -> {
+                    toast(getString(R.string.msg_pair_started))
+                    tvPairingHint.text = getString(R.string.msg_pair_started)
+                }
+                is AdbHelper.PairingStart.OpenedSettings -> {
+                    toast(getString(R.string.msg_pair_manual))
+                    tvPairingHint.text = getString(R.string.msg_pair_manual)
+                }
+                is AdbHelper.PairingStart.Failed -> {
+                    toast(getString(R.string.msg_pair_failed))
+                    tvPairingHint.text = getString(R.string.msg_pair_failed)
+                }
             }
             lockPairingButton()
             view?.postDelayed({ unstickPairingButton() }, 30_000L)
         } catch (t: Throwable) {
             Log.e("ADB_X_NetworkFr", "triggerInAppPairing failed", t)
-            android.widget.Toast.makeText(
-                requireContext(),
-                "Trigger failed: " + t.message,
-                android.widget.Toast.LENGTH_LONG,
-            ).show()
+            toast(getString(R.string.msg_pair_failed))
         }
+    }
+
+    private fun toast(msg: String) {
+        android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_LONG).show()
     }
 
     private fun lockPairingButton() {

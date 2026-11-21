@@ -5,8 +5,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -55,6 +58,9 @@ class TrustedWifiService : Service() {
         /** Minimum gap between onCapabilitiesChanged-driven evaluations. */
         private const val CAPS_THROTTLE_MS = 10_000L
 
+        /** Hidden in the public SDK; literal value of UsbManager.ACTION_USB_STATE. */
+        private const val ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE"
+
         /**
          * Start the service if not already running. Safe to call from
          * receivers (boot / wifi state change / app foreground).
@@ -85,6 +91,31 @@ class TrustedWifiService : Service() {
     /** Throttle clock for onCapabilitiesChanged — see the callback below. */
     private var lastCapsFireMs = 0L
 
+    /**
+     * USB connect/disconnect receiver, registered dynamically because
+     * ACTION_POWER_CONNECTED and ACTION_USB_STATE are NOT in Android's
+     * manifest implicit-broadcast exemption list — a static receiver
+     * cannot receive them with targetSdk 26+. The foreground service
+     * is always alive while auto-toggle is armed, so dynamic registration
+     * is reliable here. Feeds UsbStateReceiver.fireConnection().
+     */
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_POWER_CONNECTED ->
+                    UsbStateReceiver.fireConnection(ctx, connected = true)
+                Intent.ACTION_POWER_DISCONNECTED ->
+                    UsbStateReceiver.fireConnection(ctx, connected = false)
+                ACTION_USB_STATE ->
+                    UsbStateReceiver.fireConnection(
+                        ctx,
+                        connected = intent.getBooleanExtra("connected", false)
+                    )
+            }
+        }
+    }
+    private var usbReceiverRegistered = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -93,6 +124,23 @@ class TrustedWifiService : Service() {
         startForeground(NOTIF_ID, buildNotification())
         Log.i(TAG, "service created")
         registerWifiCallback()
+        registerUsbReceiver()
+    }
+
+    private fun registerUsbReceiver() {
+        if (usbReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+            addAction(ACTION_USB_STATE)
+        }
+        try {
+            registerReceiver(usbReceiver, filter)
+            usbReceiverRegistered = true
+            Log.i(TAG, "USB connect receiver registered")
+        } catch (t: Throwable) {
+            Log.w(TAG, "registerUsbReceiver: ${t.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -106,6 +154,10 @@ class TrustedWifiService : Service() {
         try {
             callback?.let { cm?.unregisterNetworkCallback(it) }
         } catch (_: Throwable) { }
+        if (usbReceiverRegistered) {
+            try { unregisterReceiver(usbReceiver) } catch (_: Throwable) { }
+            usbReceiverRegistered = false
+        }
         super.onDestroy()
     }
 

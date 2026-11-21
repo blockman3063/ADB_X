@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -13,23 +14,21 @@ import top.cbug.adbx.R
 import top.cbug.adbx.UsbStateReceiver
 import top.cbug.adbx.store.Settings as AppSettings
 import top.cbug.adbx.util.AdbHelper
-import top.cbug.adbx.util.UsbDevice
-import top.cbug.adbx.util.WiredUsbHelper
+import top.cbug.adbx.util.AdbHostKey
+import top.cbug.adbx.util.AdbKeyHelper
 
 /**
- * Wired (USB) tab — independent auto-toggle surface. We do not
- * touch wireless ADB state here; that lives in NetworkFragment /
- * WifiStateReceiver and shares zero code paths with this tab.
+ * Wired (USB) tab — independent auto-toggle surface.
  *
- * The user-facing flow is:
- *  1. Plug in a USB device (root reads /sys/bus/usb/devices
- *     entries with idVendor, idProduct, serial fields).
- *  2. Tap "Trust this device" — the serial goes into the
- *     Settings.trustedUsbSerials set, the toggles below
- *     take effect immediately.
- *  3. From then on, attaching that device and unmounting it
- *     lets the wired auto-toggle enable USB ADB on attach
- *     and (optionally) disable it on detach.
+ * The trust list is the set of ADB host keys this device has already
+ * authorized (from /data/misc/adb/adb_keys), shown by their AOSP-style
+ * fingerprint. Tapping a row marks that key trusted. Nothing here
+ * pretends to identify a physical computer — see [AdbKeyHelper] and
+ * the wired_help string, which say so in plain language.
+ *
+ * Auto-toggle is a best-effort convenience: on a USB connect event,
+ * if any trusted key is still authorized, USB ADB is enabled and the
+ * normal ADB RSA auth decides whether the connected PC is allowed.
  */
 class WiredFragment : Fragment() {
 
@@ -42,7 +41,7 @@ class WiredFragment : Fragment() {
     private lateinit var tvNoDevices: TextView
     private lateinit var btnTrustFirst: MaterialButton
 
-    private var lastDevices: List<UsbDevice> = emptyList()
+    private var lastHosts: List<AdbHostKey> = emptyList()
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -74,18 +73,14 @@ class WiredFragment : Fragment() {
             renderStatus()
         }
         btnTrustFirst.setOnClickListener {
-            val devices = WiredUsbHelper.listDevices()
-            // Toggle trust across all currently-detected devices —
-            // matches what users expect in the typical one-cable
-            // workflow. Caller can see the device list right below
-            // and untust individually via [UsbStateReceiver.fireOnce].
-            val anyTrustedBefore = devices.any { AppSettings.isTrustedUsb(it.id) }
-            for (d in devices) {
-                if (anyTrustedBefore) AppSettings.removeTrustedUsb(d.id)
-                else AppSettings.addTrustedUsb(d.id)
+            val hosts = AdbKeyHelper.listAuthorizedHosts()
+            val anyTrustedBefore = hosts.any { AppSettings.isTrustedUsb(it.fingerprint) }
+            for (h in hosts) {
+                if (anyTrustedBefore) AppSettings.removeTrustedUsb(h.fingerprint)
+                else AppSettings.addTrustedUsb(h.fingerprint)
             }
             AppSettings.save(requireContext())
-            renderDevices(devices)
+            renderHosts(AdbKeyHelper.listAuthorizedHosts())
             renderStatus()
             UsbStateReceiver.fireOnce(requireContext())
         }
@@ -93,10 +88,10 @@ class WiredFragment : Fragment() {
             val enabledNow = AdbHelper.isUsbAdbEnabled()
             val ok = if (enabledNow) AdbHelper.disableUsbAdb() else AdbHelper.enableUsbAdb()
             if (!ok) {
-                android.widget.Toast.makeText(
+                Toast.makeText(
                     requireContext(),
                     R.string.wired_toggle_failed,
-                    android.widget.Toast.LENGTH_LONG,
+                    Toast.LENGTH_LONG,
                 ).show()
             }
             AppSettings.save(requireContext())
@@ -108,7 +103,7 @@ class WiredFragment : Fragment() {
         super.onResume()
         AppSettings.load(requireContext())
         renderSwitches()
-        renderDevices(WiredUsbHelper.listDevices())
+        renderHosts(AdbKeyHelper.listAuthorizedHosts())
         renderStatus()
         renderAdbState()
     }
@@ -118,32 +113,45 @@ class WiredFragment : Fragment() {
         swWiredAutoDisable.isChecked = AppSettings.wiredAutoDisable
     }
 
-    private fun renderDevices(devices: List<UsbDevice>) {
-        lastDevices = devices
+    private fun renderHosts(hosts: List<AdbHostKey>) {
+        lastHosts = hosts
         llDeviceList.removeAllViews()
-        if (devices.isEmpty()) {
+        if (hosts.isEmpty()) {
             tvNoDevices.visibility = View.VISIBLE
             btnTrustFirst.isEnabled = false
             btnTrustFirst.text = getString(R.string.wired_action_trust)
+            renderStatus()
             return
         }
         tvNoDevices.visibility = View.GONE
         btnTrustFirst.isEnabled = true
-        val anyTrusted = devices.any { AppSettings.isTrustedUsb(it.id) }
+        val anyTrusted = hosts.any { AppSettings.isTrustedUsb(it.fingerprint) }
         btnTrustFirst.text = if (anyTrusted) {
             getString(R.string.wired_action_untrust)
         } else {
             getString(R.string.wired_action_trust)
         }
         val inflater = LayoutInflater.from(requireContext())
-        for (d in devices) {
+        for (h in hosts) {
             val row = inflater.inflate(R.layout.item_usb_wired, llDeviceList, false) as ViewGroup
-            val id = row.findViewById<TextView>(R.id.tvUsbId)
-            val label = row.findViewById<TextView>(R.id.tvUsbLabel)
+            val fpView = row.findViewById<TextView>(R.id.tvUsbId)
+            val labelView = row.findViewById<TextView>(R.id.tvUsbLabel)
             val trustedChip = row.findViewById<TextView>(R.id.tvTrusted)
-            id.text = d.id
-            label.text = getString(R.string.wired_device_label, d.vendor, d.product)
-            trustedChip.visibility = if (AppSettings.isTrustedUsb(d.id)) View.VISIBLE else View.GONE
+            fpView.text = h.fingerprint
+            labelView.text = if (h.comment.isNotBlank()) h.comment
+                             else getString(R.string.wired_key_no_comment)
+            trustedChip.visibility = if (AppSettings.isTrustedUsb(h.fingerprint)) View.VISIBLE else View.GONE
+            row.setOnClickListener {
+                if (AppSettings.isTrustedUsb(h.fingerprint)) {
+                    AppSettings.removeTrustedUsb(h.fingerprint)
+                } else {
+                    AppSettings.addTrustedUsb(h.fingerprint)
+                }
+                AppSettings.save(requireContext())
+                renderHosts(AdbKeyHelper.listAuthorizedHosts())
+                renderStatus()
+                UsbStateReceiver.fireOnce(requireContext())
+            }
             llDeviceList.addView(row)
         }
     }
@@ -155,18 +163,12 @@ class WiredFragment : Fragment() {
             return
         }
         when {
-            lastDevices.isEmpty() ->
-                tvWiredStatus.text = getString(R.string.wired_status_disabled)
-            lastDevices.any { AppSettings.isTrustedUsb(it.id) } ->
-                tvWiredStatus.text = getString(
-                    R.string.wired_status_device_trusted,
-                    lastDevices.first { AppSettings.isTrustedUsb(it.id) }.id
-                )
+            lastHosts.isEmpty() ->
+                tvWiredStatus.text = getString(R.string.wired_status_no_keys)
+            lastHosts.any { AppSettings.isTrustedUsb(it.fingerprint) } ->
+                tvWiredStatus.text = getString(R.string.wired_status_key_trusted)
             else ->
-                tvWiredStatus.text = getString(
-                    R.string.wired_status_devices_untrusted,
-                    lastDevices.size
-                )
+                tvWiredStatus.text = getString(R.string.wired_status_keys_untrusted, lastHosts.size)
         }
     }
 

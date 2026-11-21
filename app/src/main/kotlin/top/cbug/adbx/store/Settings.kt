@@ -41,6 +41,11 @@ object Settings {
     @Volatile var useTcpMode: Boolean = false
 
     private var trustedSsids: MutableSet<String> = mutableSetOf()
+    // NOTE: despite the legacy name, this now stores ADB host-key
+    // fingerprints (AOSP MD5 format), not USB serials. Key name kept
+    // so existing installs preserve their saved set across upgrade;
+    // old serial strings simply never match a fingerprint and are
+    // harmless. See AdbKeyHelper.
     private var trustedUsbSerials: MutableSet<String> = mutableSetOf()
 
     fun load(context: Context) {
@@ -80,23 +85,26 @@ object Settings {
     fun trustedUsbSet(): Set<String> = trustedUsbSerials.toSet()
 
     /**
-     * Mark the given USB device serial as trusted. Save to persist.
-     * Trust assignment is independent of the wireless trust set —
-     * a user is welcome to trust their laptop over USB but never the
-     * coffee-shop Wi-Fi, and vice versa.
+     * Mark an ADB host-key fingerprint as trusted. The value is the
+     * MD5 fingerprint AOSP shows in the USB-debugging authorization
+     * dialog (see AdbKeyHelper), NOT a USB serial or VID:PID.
+     *
+     * Trust is independent of the wireless trust set — a user can
+     * trust their laptop's ADB key over USB but never the coffee-shop
+     * Wi-Fi, and vice versa.
      */
-    fun addTrustedUsb(serial: String) {
-        val clean = serial.trim()
-        if (clean.isNotEmpty() && clean != "unknown") trustedUsbSerials.add(clean)
+    fun addTrustedUsb(fingerprint: String) {
+        val clean = fingerprint.trim()
+        if (clean.isNotEmpty()) trustedUsbSerials.add(clean)
     }
 
-    fun removeTrustedUsb(serial: String) {
-        trustedUsbSerials.remove(serial.trim())
+    fun removeTrustedUsb(fingerprint: String) {
+        trustedUsbSerials.remove(fingerprint.trim())
     }
 
-    fun isTrustedUsb(serial: String): Boolean {
-        val s = serial.trim()
-        return s.isNotEmpty() && s != "unknown" && trustedUsbSerials.contains(s)
+    fun isTrustedUsb(fingerprint: String): Boolean {
+        val s = fingerprint.trim()
+        return s.isNotEmpty() && trustedUsbSerials.contains(s)
     }
 
     /**
@@ -152,7 +160,7 @@ object Settings {
             appendLine("wired_auto_enable=" + wiredAutoEnable)
             appendLine("wired_auto_disable=" + wiredAutoDisable)
             appendLine("usb_adb_enabled=" + usbAdbEnabled)
-            appendLine("trusted_usb_serials=" + trustedUsbSerials.joinToString(","))
+            appendLine("trusted_adb_keys=" + trustedUsbSerials.joinToString(","))
         }
         try {
             val file = File(SYNC_CONFIG_FILE)

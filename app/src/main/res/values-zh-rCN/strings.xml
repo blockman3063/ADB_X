@@ -14,6 +14,8 @@
     <string name="xposed_title">Xposed 框架</string>
     <string name="xposed_active_title">模块已激活</string>
     <string name="xposed_active_subtitle">LSPosed 已在本应用进程中加载模块</string>
+    <string name="xposed_active_subtitle_working">系统 hook 工作中 — WiFi 扫描与配对码捕获已激活</string>
+    <string name="xposed_active_subtitle_partial">仅本应用进程被注入,系统级 hook 未确认。部分功能需要 root 或到开发者选项配对。</string>
     <string name="xposed_inactive_title">模块未激活</string>
     <string name="xposed_inactive_subtitle_no_frame">未检测到 Xposed 框架 — 请安装 LSPosed 并启用本模块作用域</string>
     <string name="xposed_inactive_subtitle_with_frame">已安装框架(%1$s),但模块未在本进程加载。请启用作用域并重启。</string>
@@ -40,6 +42,9 @@
     <string name="pairing_hint_idle">点击右侧按钮开始新的配对</string>
     <string name="btn_start_pairing">开启配对模式</string>
     <string name="msg_pair_requested">已请求配对,等待端口分配…</string>
+    <string name="msg_pair_started">配对弹窗已打开,请输入手机上显示的配对码</string>
+    <string name="msg_pair_manual">已打开开发者选项 — 请点"使用 Wi-Fi 配对设备",再把配对码填到这里</string>
+    <string name="msg_pair_failed">无法启动配对 — 请手动打开开发者选项</string>
     <string name="section_pairing_code">配对码</string>
     <string name="section_auto">自动化</string>
     <string name="section_settings">设置</string>
@@ -55,6 +60,8 @@
     <string name="btn_disable_adb">关闭 ADB</string>
     <string name="sw_auto_enable">连接信任 WiFi 时自动开启</string>
     <string name="sw_boot_start">开机自启动</string>
+    <string name="msg_boot_module_ok">开机模块已安装 — 开机时会自动评估信任 WiFi</string>
+    <string name="msg_boot_module_fail">开机模块安装失败(需 KernelSU/root) — 开机自启可能不生效</string>
     <string name="wifi_settings_title">Wi-Fi 设置</string>
     <string name="wifi_search_hint">搜索网络</string>
     <string name="wifi_no_match">没有匹配的网络</string>
@@ -68,7 +75,7 @@
     <string name="wifi_manage">管理 Wi-Fi</string>
     <string name="wifi_summary_fmt">显示 %1$d / 共 %2$d</string>
     <string name="section_wifi">已保存的 WiFi</string>
-    <string name="btn_refresh_wifi">刷新列表</string>
+    <string name="btn_refresh_wifi">管理 WiFi 列表</string>
     <string name="wifi_empty_hint">暂无保存的网络,点刷新扫描。</string>
     <string name="wifi_trusted_label">已信任</string>
     <string name="wifi_count_label">共 %1$d 个网络</string>
@@ -136,7 +143,7 @@
     <!-- Trusted Wi-Fi auto-toggle card -->
     <string name="section_trusted_wifi">信任 Wi-Fi</string>
     <string name="trusted_wifi_status_armed">自动开关已开启 · 当前 SSID %1$s %2$s</string>
-    <string name="trusted_wifi_status_disabled">自动开关已开启,但设置中已禁用</string>
+    <string name="trusted_wifi_status_disabled">自动开关已开启 · 当前未连接 WiFi</string>
     <string name="trusted_wifi_status_no_ssids">自动开关已开启 · 尚未添加受信任网络</string>
     <string name="trusted_wifi_status_not_armed">自动开关未开启</string>
     <string name="trusted_wifi_trusted">已信任</string>
@@ -158,19 +165,21 @@
 
     <!-- Wired (USB) device auto-toggle card -->
     <string name="section_wired">有线 USB</string>
-    <string name="wired_status_no_devices">未连接 USB 设备</string>
-    <string name="wired_status_devices_untrusted">已连接 %1$d 个设备 · 均未受信任</string>
-    <string name="wired_status_device_trusted">设备 %1$s 已受信任 · 自动开关已开启</string>
+    <string name="wired_status_no_devices">未找到已授权的 ADB 主机密钥</string>
+    <string name="wired_status_no_keys">未找到已授权的 ADB 主机密钥</string>
+    <string name="wired_status_keys_untrusted">%1$d 个已授权密钥 · 均未信任</string>
+    <string name="wired_status_key_trusted">已有受信任的 ADB 密钥 · 自动开关已开启</string>
     <string name="wired_status_disabled">自动开关未开启</string>
     <string name="wired_device_label">厂商 %1$s · 产品 %2$s</string>
     <string name="wired_device_serial_unknown">未知序列号</string>
-    <string name="wired_action_trust">信任此设备</string>
-    <string name="wired_action_untrust">取消信任</string>
+    <string name="wired_key_no_comment">无备注</string>
+    <string name="wired_action_trust">信任全部密钥</string>
+    <string name="wired_action_untrust">全部取消信任</string>
     <string name="wired_action_trusted">已信任</string>
-    <string name="wired_help">连接你信任的 USB 设备时,应用记住其序列号并自动开关 USB ADB。打开你想用的开关后,点"信任"。</string>
-    <string name="wired_auto_enable_summary">受信任设备连接时自动开启 ADB</string>
-    <string name="wired_auto_disable_summary">没有受信任设备时自动关闭 ADB</string>
-    <string name="wired_section_devices">已连接设备</string>
+    <string name="wired_help">信任对象是 ADB 主机密钥(其 MD5 指纹),不是某台物理电脑。手机无法通过 USB 线识别对面是哪台电脑 —— Android 只知道你此前授权过的密钥。点某个指纹即可信任它;插入 USB 时,若受信任密钥仍处于授权状态,就会打开 USB ADB,而具体的电脑访问仍由系统授权弹窗决定。重装系统或重新生成电脑密钥都会改变其身份。</string>
+    <string name="wired_auto_enable_summary">存在受信任的已授权密钥时自动开启 ADB</string>
+    <string name="wired_auto_disable_summary">USB 断开时自动关闭 ADB</string>
+    <string name="wired_section_devices">已授权的 ADB 主机密钥</string>
     <string name="wired_action_toggle_on">立即开启 ADB</string>
     <string name="wired_action_toggle_off">立即关闭 ADB</string>
     <string name="wired_usb_state_on">USB 调试已开启</string>

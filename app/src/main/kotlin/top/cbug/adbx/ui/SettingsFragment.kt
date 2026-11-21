@@ -8,11 +8,16 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.card.MaterialCardView
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.google.android.material.materialswitch.MaterialSwitch
 import top.cbug.adbx.MainActivity
 import top.cbug.adbx.R
 import top.cbug.adbx.store.Settings as AppSettings
+import top.cbug.adbx.util.AdbHelper
 
 /**
  * Settings tab — automation switches + language picker (popup) + about card.
@@ -56,6 +61,16 @@ class SettingsFragment : Fragment() {
         swBootStart.setOnCheckedChangeListener { _, c ->
             AppSettings.bootStart = c
             AppSettings.save(requireContext())
+            if (c) {
+                // The BootReceiver static broadcast is unreliable on
+                // OnePlus (AppStartupManager blocks background launches).
+                // Install the KernelSU boot module so the trusted-Wi-Fi
+                // evaluation actually runs at boot without the app process.
+                // Report the real outcome instead of silently doing nothing.
+                val ok = AdbHelper.installAsKernelSuModule()
+                val msg = if (ok) R.string.msg_boot_module_ok else R.string.msg_boot_module_fail
+                android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_LONG).show()
+            }
         }
         swAutoCopyAddress.setOnCheckedChangeListener { _, c ->
             AppSettings.autoCopyAddressEnabled = c
@@ -64,6 +79,28 @@ class SettingsFragment : Fragment() {
         swUseTcpMode.setOnCheckedChangeListener { _, c ->
             AppSettings.useTcpMode = c
             AppSettings.save(requireContext())
+        }
+
+        // A persisted bootStart=true can outlive the module (ROM flash,
+        // manual deletion, a failed install). Never leave the switch
+        // claiming auto-start is on while no module exists: repair it,
+        // or turn the switch off so the UI tells the truth.
+        if (AppSettings.bootStart && !AdbHelper.isKernelSuModuleInstalled()) {
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                val ok = AdbHelper.installAsKernelSuModule()
+                withContext(Dispatchers.Main) {
+                    if (!ok && isAdded) {
+                        AppSettings.bootStart = false
+                        AppSettings.save(requireContext())
+                        swBootStart.isChecked = false
+                        android.widget.Toast.makeText(
+                            requireContext(),
+                            R.string.msg_boot_module_fail,
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
         }
 
         renderLanguageLabel()

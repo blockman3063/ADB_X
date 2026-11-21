@@ -78,19 +78,17 @@ class PairingActivity : AppCompatActivity() {
         toolbar.setNavigationOnClickListener { finish() }
 
         btnTriggerPair.setOnClickListener {
-            // Direct IAdbManager.enablePairingByPairingCode via shell.
-            // This spawns the ephemeral pairing port and posts the
-            // WIRELESS_DEBUG_ENABLE_DISCOVER_ACTION intent — same path
-            // as the user tapping "Pair device with pairing code" in
-            // Developer Options.
-            val ok = AdbHelper.triggerPairing(this)
-            if (ok) {
-                Toast.makeText(this, getString(R.string.msg_pair_requested), Toast.LENGTH_SHORT).show()
-                // Refresh status so the port + code appear as soon as
-                // the system has them (typically <300 ms).
-                bgScope.launch { kotlinx.coroutines.delay(500); refreshStatus() }
-            } else {
-                Toast.makeText(this, "Trigger failed — check logcat", Toast.LENGTH_LONG).show()
+            // Honest result: report whether a real dialog opened, or
+            // whether we only guided the user to Developer Options.
+            when (AdbHelper.startPairing(this)) {
+                is AdbHelper.PairingStart.Started -> {
+                    Toast.makeText(this, getString(R.string.msg_pair_started), Toast.LENGTH_SHORT).show()
+                    bgScope.launch { kotlinx.coroutines.delay(500); refreshStatus() }
+                }
+                is AdbHelper.PairingStart.OpenedSettings ->
+                    Toast.makeText(this, getString(R.string.msg_pair_manual), Toast.LENGTH_LONG).show()
+                is AdbHelper.PairingStart.Failed ->
+                    Toast.makeText(this, getString(R.string.msg_pair_failed), Toast.LENGTH_LONG).show()
             }
         }
 
@@ -212,12 +210,12 @@ class PairingActivity : AppCompatActivity() {
     }
 
     private fun hostForDisplay(): String {
-        // Try IPv4 from WifiHelper; fall back to a placeholder so the
-        // command still has shape even if the IP probe failed.
-        val ip = WifiHelper.getExternalIpAddress().ifBlank {
-            try { WifiHelper.getLocalIpAddress(this).substringBefore("/") }
-            catch (_: Throwable) { "<phone-ip>" }
-        }
-        return ip
+        // `adb pair` runs on the local network, so the phone's LAN IP is
+        // the correct host. Using the public/WAN IP here produced a
+        // command that could never connect. Fall back to a placeholder
+        // only when the LAN IP probe fails.
+        return try {
+            WifiHelper.getLocalIpAddress(this).substringBefore("/").ifBlank { "<phone-ip>" }
+        } catch (_: Throwable) { "<phone-ip>" }
     }
 }

@@ -162,6 +162,22 @@ object XposedStatus {
         return false
     }
 
+    /**
+     * Real evidence that the settings-side hook is WORKING, as opposed
+     * to the self-written "injected" marker which only proves LSPosed
+     * touched our own process. The hook dumps the saved-WiFi list into
+     * Settings.Global adb_x_wifi_list_count; if that key is present and
+     * positive, the privileged hook has genuinely executed.
+     */
+    fun systemHookWorking(context: Context): Boolean {
+        return try {
+            val count = android.provider.Settings.Global.getInt(
+                context.contentResolver, "adb_x_wifi_list_count", 0
+            )
+            count > 0
+        } catch (_: Throwable) { false }
+    }
+
     private fun isLSPosedZygiskPresent(): Boolean {
         val probes = listOf(
             "/data/adb/lspd/config/modules_config.db",

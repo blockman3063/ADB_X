@@ -336,7 +336,10 @@ class MainActivity : AppCompatActivity() {
             }),
             xposedSubtitle = when (status.xposed.state) {
                 XposedStatus.State.ACTIVE ->
-                    getString(R.string.xposed_active_subtitle)
+                    if (XposedStatus.systemHookWorking(this))
+                        getString(R.string.xposed_active_subtitle_working)
+                    else
+                        getString(R.string.xposed_active_subtitle_partial)
                 XposedStatus.State.INACTIVE ->
                     if (status.xposed.frameworkPackages.isEmpty())
                         getString(R.string.xposed_inactive_subtitle_no_frame)

@@ -28,8 +28,9 @@ foreground app or background service required.
 - **Trusted networks** — tick the SSIDs that should re-enable ADB
 - **Auto-enable on trusted Wi-Fi** — flips `Settings.Global.ADB_WIFI_ENABLED`
   on when you join one
-- **Wired (USB) tab** — trust a host by serial and arm ADB-over-USB
-  independently of the wireless toggle
+- **Wired (USB) tab** — trust already-authorized ADB host keys (by MD5
+  fingerprint) and arm ADB-over-USB independently of the wireless toggle.
+  Trust is to an ADB *key*, not a physical PC — the UI says so plainly.
 - **Bilingual UI** — English or Simplified Chinese, switchable at runtime
 - **Mostly foreground-free** — the core toggling logic runs in
   `system_server` via LSPosed; a lightweight foreground daemon keeps it
@@ -114,7 +115,7 @@ ADB_X/
 │       │   ├── BootLogger.kt            (in-app boot diagnostic log)
 │       │   ├── BootReceiver.kt          (boot-time trusted-SSID evaluate)
 │       │   ├── WifiStateReceiver.kt     (Wi-Fi state change evaluate)
-│       │   ├── UsbStateReceiver.kt      (USB attach / detach evaluate)
+│       │   ├── UsbStateReceiver.kt      (USB connect event + trusted-key evaluate)
 │       │   ├── PairingReceiver.kt       (wireless-debug discover action)
 │       │   ├── TrustedWifiService.kt    (foreground auto-toggle daemon)
 │       │   ├── store/Settings.kt        (SharedPreferences + config mirror)
@@ -131,7 +132,7 @@ ADB_X/
 │       │   │   ├── LocaleHelper.kt
 │       │   │   ├── ShellUtils.kt
 │       │   │   ├── WifiHelper.kt
-│       │   │   ├── WiredUsbHelper.kt
+│       │   │   ├── AdbKeyHelper.kt      (reads adb_keys, AOSP MD5 fingerprint)
 │       │   │   └── XposedStatus.kt
 │       │   └── xposed/                  (LSPosed hooks)
 │       │       ├── XposedInit.kt
