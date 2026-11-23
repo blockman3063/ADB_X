@@ -24,6 +24,10 @@ object AdbHelper {
      * keeps the "配对进行中" card showing after the dialog has closed. */
     private const val PORT_MARKER_TTL_MS = 5 * 60 * 1000L
 
+    /** One-time system pairing code (written by the Settings hook) expires
+     *  with the dialog, ~120 s. Keep a small safety margin. */
+    private const val SESSION_CODE_TTL_MS = 3 * 60 * 1000L
+
     /** Use settings global as primary check (works on Rust adbd too) */
     fun isAdbWifiEnabled(context: Context): Boolean {
         return getCurrentState(context)
@@ -287,7 +291,50 @@ object AdbHelper {
         return r.isSuccess()
     }
 
+    /**
+     * Read the one-time pairing code captured by the Settings hook from the
+     * live system pairing dialog. Honors a TTL so a code from a closed
+     * session never lingers. Returns "" when there is no fresh code.
+     */
+    fun readSessionPairingCode(): String {
+        // Primary channel: Settings.Global. The hook runs inside
+        // com.android.settings, which cannot write /data/local/tmp (SELinux)
+        // nor exec su, but CAN write Settings.Global via reflection — the
+        // same channel our WiFi-list dump uses successfully on this ROM.
+        try {
+            val ctx = top.cbug.adbx.App.appContext
+            val cr = ctx.contentResolver
+            val code = Settings.Global.getString(cr, "adb_x_hook_code") ?: ""
+            val ts = Settings.Global.getString(cr, "adb_x_hook_code_ts")?.toLongOrNull() ?: 0L
+            val age = System.currentTimeMillis() - ts
+            if (code.matches(Regex("\\d{6,8}")) && age in 0..SESSION_CODE_TTL_MS) {
+                Log.d(TAG, "session pairing code via Settings.Global: $code (age ${age}ms)")
+                return code
+            }
+        } catch (_: Throwable) { }
+        // Legacy/fallback channel: marker file written by an older hook.
+        val readText = {
+            val f = File("/data/local/tmp/adb_x_hook_code")
+            if (!f.exists()) "" else {
+                val age = System.currentTimeMillis() - f.lastModified()
+                if (age > SESSION_CODE_TTL_MS || age < 0) "" else {
+                    val t = f.readText().trim()
+                    if (t.matches(Regex("\\d{6,8}"))) t else ""
+                }
+            }
+        }
+        try {
+            val direct = readText()
+            if (direct.isNotEmpty()) return direct
+        } catch (_: Throwable) { }
+        return ""
+    }
+
     fun readPairingCode(): String {
+        // Session code (fresh, from the hook) takes priority over the
+        // long-lived custom code and over any dumpsys guess.
+        val session = readSessionPairingCode()
+        if (session.isNotEmpty()) return session
         // 1. Direct file read
         try {
             val file = File("/data/local/tmp/adb_x_pairing_code")
@@ -499,89 +546,51 @@ object AdbHelper {
      * AdbDebuggingManager state from outside system_server, and on
      * this ROM the hook is not injected into system_server).
      */
-    /** Outcome of a pairing-start attempt. Kept distinct so the UI can
-     *  tell the user the truth: a real dialog was opened, versus "we only
-     *  opened Settings, you must tap Pair yourself". */
+    /** Outcome of a pairing-guide attempt. The pairing SESSION is always
+     *  started by the user in system Developer options — this app never
+     *  triggers it. We only guide the user to the right screen. */
     sealed class PairingStart {
-        object Started : PairingStart()      // dialog genuinely triggered
         object OpenedSettings : PairingStart() // guided to Developer Options
         object Failed : PairingStart()
     }
 
     /**
-     * Read a genuinely live pairing port straight from adbd. Returns ""
-     * unless wireless ADB is enabled AND tls_port is an ephemeral port —
-     * exactly the state a real pairing dialog produces. A shell rc=0 or a
-     * leftover property is deliberately NOT accepted as proof.
-     */
-    private fun livePairingPortFromDumpsys(): String {
-        return try {
-            val r = ShellUtils.executeSu("dumpsys adb 2>&1", 2500)
-            if (!r.isSuccess() || r.output.isBlank()) return ""
-            val block = Regex("""adb_wifi\s*=\s*\{([\s\S]*?)\}""")
-                .find(r.output)?.groupValues?.get(1) ?: return ""
-            val enabled = Regex("""enabled\s*=\s*(\w+)""")
-                .find(block)?.groupValues?.get(1)?.equals("true", true) ?: false
-            if (!enabled) return ""
-            val port = Regex("""tls_port\s*=\s*(\d+)""")
-                .find(block)?.groupValues?.get(1) ?: ""
-            if (port.toIntOrNull() in 1024..65535) port else ""
-        } catch (_: Throwable) { "" }
-    }
-
-    /**
-     * Start the wireless-pairing flow, honestly.
+     * Guide the user to the system wireless-pairing screen. We deliberately
+     * do NOT start the pairing session ourselves: on this ROM every
+     * programmatic path (`service call adb`, the request-marker watcher)
+     * failed to open a real dialog and only produced false UI state. Android
+     * only mints the one-time code when the user taps "Pair device with
+     * pairing code" in Developer options, so that tap must be the user's.
      *
-     * The old implementation wrote a marker file and returned true even
-     * though the system_server hook that consumes it never loads on this
-     * ROM — so "Pairing requested" was a lie and no dialog ever appeared.
-     * We now only report [PairingStart.Started] when adbd itself reports
-     * a live ephemeral tls_port (proof the dialog really opened); otherwise
-     * we open Developer Options and say so via
-     * [PairingStart.OpenedSettings].
+     * Our Settings hook watches the resulting dialog and records the code;
+     * the app reads the port from `dumpsys adb`.
      */
     fun startPairing(context: Context?): PairingStart {
         val ctx = context ?: top.cbug.adbx.App.appContext
-        // Try the shell binder path (works on zero-config root setups).
-        // `service call adb` with the startAdbPairing transaction opens the
-        // real dialog when the code matches this device's IAdbManager.
-        for (code in arrayOf(7, 8, 9)) {
-            val suAttempt = ShellUtils.executeSu("service call adb $code", 3000)
-            if (!suAttempt.isSuccess()) continue
-            // A shell rc=0 is NOT proof that the dialog opened. On the test
-            // device `service call adb 7` returned rc=0 with no error text,
-            // yet adb_wifi.tls_port stayed 0 and no dialog appeared. Only
-            // a live ephemeral port proves real success.
-            val livePort = livePairingPortFromDumpsys()
-            if (livePort.isNotEmpty()) {
-                Log.d(TAG, "startPairing: service call adb $code → live pairing port $livePort")
-                return PairingStart.Started
+        // Prefer the dedicated wireless-debugging screen (string literal:
+        // the constant is hidden on some SDK levels). Fall back to plain
+        // Developer options if the ROM doesn't handle that action.
+        val actions = arrayOf(
+            "android.settings.WIRELESS_DEBUGGING_SETTINGS",
+            Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
+        )
+        for (action in actions) {
+            try {
+                val intent = Intent(action)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                ctx.startActivity(intent)
+                Log.d(TAG, "startPairing: opened $action (user must tap Pair)")
+                return PairingStart.OpenedSettings
+            } catch (t: Throwable) {
+                Log.w(TAG, "startPairing: $action failed: ${t.message}")
             }
-            Log.d(TAG, "startPairing: service call adb $code rc=0 but no live session")
-        }
-        // Fallback: mark the request for any hook that IS running
-        // (settings-side watcher), then guide the user to the real toggle.
-        // We do NOT claim success here.
-        try {
-            val requestFile = File("/data/local/tmp/adb_x_request_pair")
-            requestFile.parentFile?.mkdirs()
-            requestFile.writeText("1")
-        } catch (_: Throwable) { }
-        try {
-            val devIntent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            ctx.startActivity(devIntent)
-            Log.d(TAG, "startPairing: opened Developer Options (manual Pair needed)")
-            return PairingStart.OpenedSettings
-        } catch (t: Throwable) {
-            Log.w(TAG, "startPairing: Settings Intent failed: " + t.message)
         }
         return PairingStart.Failed
     }
 
-    /** Backwards-compatible boolean: true only if a real dialog started. */
+    /** Backwards-compatible boolean: pairing is now always user-started. */
     fun triggerPairing(context: Context? = null): Boolean =
-        startPairing(context) == PairingStart.Started
+        startPairing(context) == PairingStart.OpenedSettings
 
 
     /** True only when the boot module and both scripts are actually on disk. */

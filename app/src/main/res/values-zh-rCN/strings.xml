@@ -39,7 +39,7 @@
     <string name="pairing_prefix_cmd_fmt">adb pair %1$s:%2$s %3$s</string>
     <string name="pairing_summary_no_code">(使用临时 6 位码)</string>
     <string name="pairing_manual_hint">如果端口看起来不对,请在开发者选项 → 无线调试里查看实际端口。</string>
-    <string name="pairing_hint_idle">点击右侧按钮开始新的配对</string>
+    <string name="pairing_hint_idle">点右侧按钮打开系统配对页，手动点“使用配对码配对”，码会自动显示在这里</string>
     <string name="btn_start_pairing">开启配对模式</string>
     <string name="msg_pair_requested">已请求配对,等待端口分配…</string>
     <string name="msg_pair_started">配对弹窗已打开,请输入手机上显示的配对码</string>

@@ -388,20 +388,14 @@ class NetworkFragment : Fragment() {
     }
 
     /**
-     * Trigger ADB pairing mode entirely from inside the app: write the
-     * pair-request marker file. The system_server-side LSPosed watcher
-     * (set up in AdbSystemHooks.hook()) picks it up within ~1 s and calls
-     * AdbDebuggingManager.startAdbPairing(), then writes the resulting
-     * port to /data/local/tmp/adb_x_pairing_port for our reader to pick
-     * up. The user does not need to touch Developer options.
+     * Guide the user to the system pairing screen. The pairing SESSION is
+     * always started by the user tapping "Pair device with pairing code" in
+     * Developer options — we never auto-start it. Our Settings hook records
+     * the one-time code once the system dialog shows it.
      */
     private fun triggerInAppPairing() {
         try {
             when (AdbHelper.startPairing(requireContext())) {
-                is AdbHelper.PairingStart.Started -> {
-                    toast(getString(R.string.msg_pair_started))
-                    tvPairingHint.text = getString(R.string.msg_pair_started)
-                }
                 is AdbHelper.PairingStart.OpenedSettings -> {
                     toast(getString(R.string.msg_pair_manual))
                     tvPairingHint.text = getString(R.string.msg_pair_manual)
@@ -411,8 +405,6 @@ class NetworkFragment : Fragment() {
                     tvPairingHint.text = getString(R.string.msg_pair_failed)
                 }
             }
-            lockPairingButton()
-            view?.postDelayed({ unstickPairingButton() }, 30_000L)
         } catch (t: Throwable) {
             Log.e("ADB_X_NetworkFr", "triggerInAppPairing failed", t)
             toast(getString(R.string.msg_pair_failed))
@@ -423,17 +415,10 @@ class NetworkFragment : Fragment() {
         android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_LONG).show()
     }
 
-    private fun lockPairingButton() {
-        btnStartPairing.isEnabled = false
-        btnStartPairing.text = getString(R.string.section_pairing_code)
-    }
-
     /**
-     * Re-enable the 开启配对模式 button and reset the hint text. Called
-     * either by the 30-second safety timer after a tap, or by
-     * renderPairing() each tick once the marker file has expired (or
-     * never appeared in the first place), so the user is never
-     * stranded on a disabled control.
+     * Keep the 开启配对模式 button enabled and reset its hint. Called by
+     * renderPairing() when no session is active so the control is never
+     * stranded in a disabled state.
      */
     private fun unstickPairingButton() {
         if (!isAdded) return

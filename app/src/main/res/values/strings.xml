@@ -46,7 +46,7 @@
     <string name="pairing_prefix_cmd_fmt">adb pair %1$s:%2$s %3$s</string>
     <string name="pairing_summary_no_code">(using ephemeral 6-digit code)</string>
     <string name="pairing_manual_hint">If the port looks wrong, check Developer options → Wireless debugging for the actual port.</string>
-    <string name="pairing_hint_idle">Tap the right button to start a new pairing</string>
+    <string name="pairing_hint_idle">Tap the button to open system pairing, choose "Pair with pairing code", and the code appears here</string>
     <string name="btn_start_pairing">Start pairing</string>
     <string name="msg_pair_requested">Pairing requested, waiting for port…</string>
     <string name="msg_pair_started">Pairing dialog opened — enter the code shown on the phone</string>

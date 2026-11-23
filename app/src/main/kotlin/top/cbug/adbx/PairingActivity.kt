@@ -78,13 +78,9 @@ class PairingActivity : AppCompatActivity() {
         toolbar.setNavigationOnClickListener { finish() }
 
         btnTriggerPair.setOnClickListener {
-            // Honest result: report whether a real dialog opened, or
-            // whether we only guided the user to Developer Options.
+            // Pairing is always user-started in system Developer options;
+            // we only guide them there, then pick up the code via the hook.
             when (AdbHelper.startPairing(this)) {
-                is AdbHelper.PairingStart.Started -> {
-                    Toast.makeText(this, getString(R.string.msg_pair_started), Toast.LENGTH_SHORT).show()
-                    bgScope.launch { kotlinx.coroutines.delay(500); refreshStatus() }
-                }
                 is AdbHelper.PairingStart.OpenedSettings ->
                     Toast.makeText(this, getString(R.string.msg_pair_manual), Toast.LENGTH_LONG).show()
                 is AdbHelper.PairingStart.Failed ->
