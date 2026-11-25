@@ -15,14 +15,17 @@
 
 ADB_X pins the wireless-debugging port, captures the ADB pairing code
 the moment it appears, and turns ADB on automatically when you join
-a trusted Wi-Fi network — all driven by an LSPosed module, with no
-foreground app or background service required.
+a trusted Wi-Fi network. Most work is done with root + a small KernelSU
+boot module; LSPosed is used for one thing only — reading the pairing
+code out of the Settings dialog.
 
 ## Features
 
-- **Fixed wireless-debugging port** — no more random port from `adb pair`
-- **Live pairing-code capture** — read the current pairing code straight
-  from the system-server hook, copy to clipboard
+- **Live connect port + optional fixed TCP mode** — shows the real adbd port
+  (random by design) with a copyable connect command, or pin it to 5555 via
+  legacy TCP mode
+- **Live pairing-code capture** — the Settings-process hook reads the
+  real code the moment the pairing dialog shows it, copy to clipboard
 - **Saved-Wi-Fi scan** — list every Wi-Fi your device remembers, split
   into connected / saved / available sections
 - **Trusted networks** — tick the SSIDs that should re-enable ADB
@@ -32,16 +35,17 @@ foreground app or background service required.
   fingerprint) and arm ADB-over-USB independently of the wireless toggle.
   Trust is to an ADB *key*, not a physical PC — the UI says so plainly.
 - **Bilingual UI** — English or Simplified Chinese, switchable at runtime
-- **Mostly foreground-free** — the core toggling logic runs in
-  `system_server` via LSPosed; a lightweight foreground daemon keeps it
-  alive when the UI is closed
+- **Foreground-free** — a KernelSU boot module handles the boot-time
+  toggle and a foreground daemon handles Wi-Fi changes; neither needs
+  the app UI open
+- **Reboot-free hook edits** — the only LSPosed scope is Settings, so
+  hook changes take effect after a force-stop of Settings, no full reboot
 
 ## Requirements
 
 - Android 11 (API 30) or newer
-- LSPosed / Xposed framework
-- Root (KernelSU or Magisk) for the LSPosed scope — the system-server
-  hook needs root to write to `/data/local/tmp`
+- LSPosed / Xposed framework (only for pairing-code capture)
+- Root (KernelSU or Magisk) for the boot module and shell helpers
 
 ## Build
 
@@ -61,43 +65,51 @@ The debug APK (un-signed, installable via `adb install -r`) is in
 
 1. `adb install -r app/build/outputs/apk/debug/app-debug.apk`
 2. Open **LSPosed Manager** → enable the **ADB_X** module
-3. Set the scope to **Android (system_server)** and **Settings
-   (com.android.settings)**
-4. Reboot, or soft-restart the affected processes
+3. Set the scope to **Settings (com.android.settings) only** — do not
+   select Android / system_server; that branch was removed
+4. Force-stop Settings once so the hook is injected (no full reboot)
 5. Launch the **ADB_X** app, pick your language, set the fixed port,
    tick the Wi-Fi networks you trust
+6. Turn on "Start on boot" to install the KernelSU boot module
 
 ## How it works
 
-### Fixed port
-The hook intercepts `SystemProperties.set` for `service.adb.tls.port`
-and `service.adb.tcp.port` and rewrites the value to the user-chosen
-fixed port before adbd binds to it.
+### Connect port & fixed-port mode
+Android 11+ TLS wireless debugging picks a **random port each time adbd
+starts**; there is no way to pin it — `service.adb.tls.port` is a legacy prop
+adbd ignores. The app therefore reads the real port from
+`dumpsys adb` → `adb_wifi.tls_port` and shows a copyable
+`adb connect IP:port` line that always matches reality.
+
+If you genuinely need a stable port, enable **fixed TCP mode**: the app sets
+`service.adb.tcp.port` and restarts adbd (the equivalent of `adb tcpip`),
+then verifies the prop read-back. This drops the current wireless link for a
+moment and is unencrypted, so reconnect to `IP:5555` after enabling. Use the
+same switch to return to encrypted TLS mode (random port again).
 
 ### Pairing-code capture
-On the pairing dialog's construction (best-effort hook across several
-candidate classes for different Android versions), the temporary
-pairing port is written to `/data/local/tmp/adb_x_pairing_port`; the
-saved custom code is written to `/data/local/tmp/adb_x_pairing_code`.
-The app reads both files and renders the full
-`adb pair host:port code` command with a copy-to-clipboard button.
+Pairing is started by the user in Developer options. The Settings-process
+hook intercepts `AdbWirelessDialogController.setPairingCode(String)` and
+publishes the real code + timestamp to `Settings.Global` (the Settings
+process cannot write `/data/local/tmp` nor exec `su`). The app reads it
+back with a short TTL and renders the full `adb pair host:port code`
+command. The live port comes from `dumpsys adb` → `adb_wifi.tls_port`;
+stale `dumpsys wifi` fields are deliberately ignored.
 
 ### Auto-enable on trusted Wi-Fi
-A `ConnectivityManager.NetworkCallback` runs in `system_server` (via
-LSPosed) and again in the app process (foreground daemon plus a
-statically registered `WifiStateReceiver`). When the active Wi-Fi matches
-one of the trusted SSIDs, wireless ADB is switched on. Disconnects are
-deliberately left to Android — adbd keeps its endpoint alive across SSID
-transitions, and disabling behind the user's back would drop a live
-session.
+A foreground daemon plus a boot-time KernelSU module (`service.sh` +
+`adbx-boot-eval`) do the toggle with root, bypassing Android 14+
+background-receiver limits. A `ConnectivityManager.NetworkCallback` in
+the app handles live SSID changes. Disconnects are left to Android —
+adbd keeps its endpoint alive across SSID transitions, and disabling
+behind the user's back would drop a live session.
 
 ### Saved-Wi-Fi list
 Android 11+ hides `WifiManager.getConfiguredNetworks()` from third-party
-apps (it returns an empty list), so the hook inside `system_server` reads
-the networks and publishes them through `Settings.Global` in
-`adb_x_wifi_list_*` chunks. The app reassembles those chunks; an on-disk
-marker file is used as a fallback on ROMs where the settings provider is
-restricted.
+apps (it returns an empty list), so the Settings-process hook runs
+`dumpsys wifi` off the main thread and publishes the SSIDs through
+`Settings.Global` in `adb_x_wifi_list_*` chunks. The app reassembles
+them; `adb_x_wifi_list_count` also doubles as the hook-working signal.
 
 ## Project layout
 
@@ -136,7 +148,7 @@ ADB_X/
 │       │   │   └── XposedStatus.kt
 │       │   └── xposed/                  (LSPosed hooks)
 │       │       ├── XposedInit.kt
-│       │       ├── AdbSystemHooks.kt    (system_server + settings)
+│       │       ├── AdbSystemHooks.kt    (settings-process hook: WiFi list)
 │       │       └── SettingsHooks.kt     (Settings app)
 │       └── res/
 │           ├── layout/                  (4 fragments + 2 activities)

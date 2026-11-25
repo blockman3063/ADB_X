@@ -492,10 +492,9 @@ object WifiHelper {
         //   4. WifiManager.configuredNetworks — requires location
         //      permission, returns 0 on Android 14+ behind the
         //      privacy policy.
-        //   5. hook file at /data/local/tmp/adb_x_wifi_list —
-        //      written by the LSPosed system_server hook when the
-        //      module is loaded; fast (~5 ms) and doesn't gate on
-        //      cmd availability.
+        //   5. WiFi list published by the LSPosed Settings-process hook
+        //      to Settings.Global (adb_x_wifi_list_*); fast and doesn't
+        //      gate on cmd availability.
         //
         // The wall budget keeps the total probe under 4 s even
         // when every path fails. On OnePlus, after the first
@@ -679,13 +678,12 @@ object WifiHelper {
      * SELinux-gated dumpsys path returns nothing, and the system_app
      * WifiManager API hides most profiles behind the privacy policy).
      *
-     * The LSPosed system_server hook has full WifiManager visibility,
-     * so it dumps a flat ssid|bssid|security list to
-     * /data/system/adb_x_wifi_list (system_data_file label — the
-     * untrusted_app SELinux context that we run in can read this).
-     * This is the slowest fallback path but it works on every ROM
-     * we've tested, including OnePlus where the XML and dumpsys paths
-     * are blocked by SELinux labels.
+     * The LSPosed Settings-process hook runs dumpsys wifi off the main
+     * thread and publishes the SSID list to Settings.Global in
+     * adb_x_wifi_list_* chunks (system_app can write the provider; the
+     * app reads it back). This is the slowest fallback path but it
+     * works on every ROM we've tested, including OnePlus where the
+     * XML and dumpsys paths from the app process are blocked.
      */
     private fun getSavedNetworksFromHookFile(): List<SavedWifi> {
      // First try the LSPosed-module-written Settings.Global slots.

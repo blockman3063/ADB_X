@@ -136,8 +136,8 @@ object Settings {
 
 
     /** Sync settings to Settings.Global so the LSPosed hook running in
-     *  com.android.settings (or system_server on AOSP) can read them
-     *  directly without going through a flat file. Falls back to the
+     *  com.android.settings can read them directly without going through
+     *  a flat file. Falls back to the
      *  /data/local/tmp mirror for the case where Settings.Global is
      *  read-restricted on a heavily-customised ROM. Runs on a
      *  background thread - do NOT call from main thread. */

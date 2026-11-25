@@ -108,6 +108,11 @@
     <string name="msg_setting_port">Setting port %1$d...</string>
     <string name="msg_fixed_port_ok">Fixed port: %1$d</string>
     <string name="msg_fixed_port_fail">Failed - check ROOT</string>
+    <string name="msg_tcp_restarting">Restarting adbd, connection may drop briefly…</string>
+    <string name="msg_tcp_mode_ok">Fixed TCP port active: %1$d (reconnect if dropped)</string>
+    <string name="msg_tcp_mode_fail">Could not set TCP port %1$d - check root</string>
+    <string name="msg_tls_mode_ok">Back to TLS wireless debugging</string>
+    <string name="msg_tls_mode_fail">Could not restore TLS mode - check root</string>
     <string name="msg_enabling_adb">Enabling wireless ADB...</string>
     <string name="msg_disabling_adb">Disabling wireless ADB...</string>
     <string name="msg_still_loading">Still loading, please wait...</string>

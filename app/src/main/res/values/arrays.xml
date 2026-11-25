@@ -2,16 +2,15 @@
 <resources>
     <string-array name="xposed_scope">
         <!--
-            "system" is the LSPosed magic scope that maps to the
-            system_server process. Earlier versions used "android" here,
-            which on most ROMs is just the framework's own android package
-            (uid 1000 but NOT the same runtime as the server). With
-            "android" the daemon never injected adbx into system_server,
-            so AdbSystemHooks.hook() never ran. Pair the magic scope
-            with com.android.settings so the SettingsHooks side keeps
-            working for the developer-options entry-point taps.
+            Scope is intentionally Settings-only. Earlier builds also
+            listed "system" (LSPosed magic for system_server) to drive
+            WiFi auto-toggle from a NetworkCallback inside the server.
+            On this ROM LSPosed never injected system_server, so that
+            branch never ran — it only forced a full reboot every time
+            the hook changed. Everything that actually works (WiFi list
+            dump, pairing-code capture) lives in the Settings process,
+            which can be restarted with a force-stop instead of a reboot.
         -->
-        <item>system</item>
         <item>com.android.settings</item>
     </string-array>
 </resources>

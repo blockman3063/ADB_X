@@ -141,13 +141,17 @@ class NetworkFragment : Fragment() {
         swFixedPort.setOnCheckedChangeListener { _, checked ->
             AppSettings.fixedPortEnabled = checked
             AppSettings.save(requireContext())
-            // Make the switch actually do something: enabling applies the
-            // current port, disabling restores the default ADB port. Before
-            // this, the toggle only stored a local flag and did nothing.
-            val target = if (checked) {
-                etPort.text?.toString()?.trim()?.toIntOrNull() ?: AppSettings.fixedPort
-            } else 5555
-            (activity as? MainActivity)?.applyFixedPort(target)
+            // Fixed port = legacy TCP mode (adb tcpip). Enabling restarts
+            // adbd and briefly drops the wireless link — the activity warns.
+            // Disabling returns to TLS wireless debugging (random port).
+            val act = activity as? MainActivity ?: return@setOnCheckedChangeListener
+            if (checked) {
+                val target = etPort.text?.toString()?.trim()?.toIntOrNull()
+                    ?: AppSettings.fixedPort
+                act.applyFixedPort(target)
+            } else {
+                act.disableFixedPort()
+            }
         }
 
         btnApplyPort.setOnClickListener {

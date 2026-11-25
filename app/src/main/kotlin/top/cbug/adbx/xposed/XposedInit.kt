@@ -36,18 +36,17 @@ class XposedInit : IXposedHookLoadPackage {
         }
 
         val procName = lpparam.processName
+        // Scope is intentionally Settings-only. The old system_server
+        // branch never fired on this ROM (LSPosed does not inject the
+        // server here) and only forced a full reboot on every hook edit.
+        // Everything real — WiFi-list dump and pairing-code capture —
+        // runs in the Settings process, which can be force-stopped and
+        // restarted without rebooting the device.
         when {
-            procName == "system_server" || procName.endsWith(":system_server") -> {
-                XposedBridge.log("[$TAG] handleLoadPackage: procName='$procName' package='${lpparam.packageName}' → system_server hook")
-                AdbSystemHooks.hook(lpparam)
-            }
             lpparam.packageName == "com.android.settings" -> {
-                XposedBridge.log("[$TAG] handleLoadPackage: procName='$procName' package='${lpparam.packageName}' → settings-side system hook")
+                XposedBridge.log("[$TAG] handleLoadPackage: procName='$procName' package='${lpparam.packageName}' → settings hooks")
                 SettingsHooks.hook(lpparam)
                 AdbSystemHooks.hookSettings(lpparam)
-            }
-            lpparam.packageName == "android" && procName != "system_server" -> {
-                XposedBridge.log("[$TAG] handleLoadPackage: android proc='$procName' (system_server handled separately)")
             }
             else -> {
                 XposedBridge.log("[$TAG] handleLoadPackage: procName='$procName' package='${lpparam.packageName}' — no hook")

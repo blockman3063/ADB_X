@@ -101,6 +101,12 @@
     <string name="msg_setting_port">正在设置端口 %1$d...</string>
     <string name="msg_fixed_port_ok">固定端口:%1$d</string>
     <string name="msg_fixed_port_fail">失败 — 请检查 ROOT</string>
+    <string name="msg_tcp_restarting">正在重启 adbd,连接可能短暂中断…</string>
+    <string name="msg_tcp_mode_ok">固定 TCP 端口已生效:%1$d(若断连请重新连接)</string>
+    <string name="msg_tcp_mode_fail">无法设置 TCP 端口 %1$d — 请检查 ROOT</string>
+    <string name="msg_tls_mode_ok">已切回 TLS 无线调试</string>
+    <string name="msg_tls_mode_fail">无法恢复 TLS 模式 — 请检查 ROOT</string>
+    <string name="sw_use_tcp_mode">使用固定 TCP 端口模式</string>
     <string name="msg_enabling_adb">正在开启无线 ADB...</string>
     <string name="msg_disabling_adb">正在关闭无线 ADB...</string>
     <string name="msg_still_loading">仍在加载,请稍候...</string>

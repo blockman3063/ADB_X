@@ -77,8 +77,11 @@ class SettingsFragment : Fragment() {
             AppSettings.save(requireContext())
         }
         swUseTcpMode.setOnCheckedChangeListener { _, c ->
-            AppSettings.useTcpMode = c
-            AppSettings.save(requireContext())
+            // Keep this switch consistent with the Network tab's fixed-port
+            // control: both toggle the same legacy TCP mode. This actually
+            // restarts adbd (brief link drop) instead of storing a dead flag.
+            val act = activity as? MainActivity ?: return@setOnCheckedChangeListener
+            if (c) act.applyFixedPort(5555) else act.disableFixedPort()
         }
 
         // A persisted bootStart=true can outlive the module (ROM flash,

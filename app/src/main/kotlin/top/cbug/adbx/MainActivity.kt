@@ -383,15 +383,39 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Port apply ----------------
 
+    /**
+     * Enable fixed-port TCP mode. This restarts adbd, which briefly drops
+     * the live wireless connection — warn first. Verify by reading back
+     * the prop we control, then refresh so the address card shows the
+     * real port (via AdbHelper.getRealConnectPort()).
+     */
     fun applyFixedPort(port: Int) {
         AppSettings.fixedPort = port
+        AppSettings.useTcpMode = true
         AppSettings.save(this)
-        toast(getString(R.string.msg_setting_port, port))
+        toast(getString(R.string.msg_tcp_restarting))
         bgScope.launch {
-            val ok = AdbHelper.setFixedPort(port)
+            val ok = AdbHelper.enableTcpMode(port)
             withContext(Dispatchers.Main) {
-                toast(getString(if (ok) R.string.msg_fixed_port_ok else R.string.msg_fixed_port_fail, port))
+                toast(getString(if (ok) R.string.msg_tcp_mode_ok else R.string.msg_tcp_mode_fail, port))
             }
+            // Give adbd a moment to come back before re-reading the port.
+            kotlinx.coroutines.delay(1500)
+            doFullRefresh()
+        }
+    }
+
+    /** Switch back to TLS wireless debugging (random port, encrypted). */
+    fun disableFixedPort() {
+        AppSettings.useTcpMode = false
+        AppSettings.save(this)
+        toast(getString(R.string.msg_tcp_restarting))
+        bgScope.launch {
+            val ok = AdbHelper.disableTcpMode()
+            withContext(Dispatchers.Main) {
+                toast(getString(if (ok) R.string.msg_tls_mode_ok else R.string.msg_tls_mode_fail))
+            }
+            kotlinx.coroutines.delay(1500)
             doFullRefresh()
         }
     }

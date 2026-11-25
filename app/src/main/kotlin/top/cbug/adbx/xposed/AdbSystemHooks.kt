@@ -1,4 +1,4 @@
-﻿package top.cbug.adbx.xposed
+package top.cbug.adbx.xposed
 
 import android.content.Context
 import android.net.ConnectivityManager
@@ -9,7 +9,6 @@ import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import java.io.File
@@ -17,10 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * System_server hooks — all ADB management logic lives here.
+ * Settings-process hooks. All logic that still runs lives here.
  *
- * App (UI only): writes config to /data/system/adb_x_config.txt
- * Hook: reads config on WiFi events + retry when file appears late.
+ * The former system_server branch never fired on this ROM (LSPosed
+ * does not inject the server here), so `hook()` and its pairing-port
+ * probes were removed. Only the Settings-side entry point remains —
+ * it can be force-stopped and restarted without a full device reboot.
+ *
+ * App writes config to /data/system/adb_x_config.txt; the hook reads
+ * it on WiFi events and retries when the file appears late.
  */
 object AdbSystemHooks {
 
@@ -35,57 +39,6 @@ object AdbSystemHooks {
     private var retryCount = AtomicInteger(0)
     private val maxRetries = 8
     private val retryDelayMs = 10000L
-
-    fun hook(lpparam: LoadPackageParam) {
-        if (!registered.compareAndSet(false, true)) return
-        XposedInit.log("[$TAG] Loading system_server hooks")
-
-        // Best-effort hooks first — these don't need system services and
-        // should always run regardless of whether connectivity/wifi come
-        // up in time. They only need class loading, which is stable.
-        //
-        // Pass the injected class loader through: system_server's own
-        // framework classes resolve from the bootstrap loader, but OEM
-        // classes (com.oplus.adbd.*) may sit in a per-process loader that
-        // a null loader cannot see.
-        val cl = lpparam.classLoader
-        hookPairingDialog(cl)
-        hookPairingFuzzy(cl)
-
-        try {
-            val atClass = XposedHelpers.findClass("android.app.ActivityThread", null)
-            val activityThread = XposedHelpers.callStaticMethod(atClass, "currentActivityThread")
-            val context = XposedHelpers.callMethod(activityThread, "getSystemContext") as Context
-
-            // SAFE cast — on Android 11 (and some early-boot ROMs even on
-            // 13+) ConnectivityManager is not bound to the system context
-            // yet when the Zygote injects us. Forcing a non-null `as`
-            // throws "null cannot be cast to non-null type" and the whole
-            // try-block aborts, killing every callback below. Retry on
-            // the main looper until both services come online.
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            val wm = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            val handler = Handler(Looper.getMainLooper())
-
-            if (cm == null || wm == null) {
-                XposedInit.log(
-                    "[$TAG] System services not ready yet " +
-                    "(cm=${cm != null}, wm=${wm != null}); deferring init"
-                )
-                scheduleDeferredInit(context, handler, attempt = 1)
-                return
-            }
-
-            installCallbacks(context, cm, wm, handler)
-        } catch (t: Throwable) {
-            XposedInit.log("[$TAG] Init failed: ${t.message}")
-            // DO NOT clear `registered` — the framework will not invoke
-            // handleLoadPackage again on system_server this boot, and
-            // flipping the flag would let another instance of this hook
-            // double-register NetworkCallbacks on retry. Instead, defer.
-            scheduleDeferredInitRetry(attempt = 1)
-        }
-    }
 
     /**
      * Re-attempt to wire up system_server callbacks after the framework
@@ -202,13 +155,12 @@ object AdbSystemHooks {
                 }
             })
 
-            XposedInit.log("[$TAG] WiFi callback registered — all ADB logic in system_server")
+            XposedInit.log("[$TAG] WiFi callback registered in Settings process")
 
-            // Dump saved WiFi networks to a world-readable file so the app
-            // can read them. Android 11+ privacy hides the full list from
-            // third-party apps via WifiManager.configuredNetworks, but
-            // system_server has full visibility. We piggyback on the
-            // existing WifiManager injection point.
+            // Dump saved WiFi networks to Settings.Global so the app can
+            // read them. Android 11+ privacy hides the full list from
+            // third-party apps via WifiManager.configuredNetworks, but the
+            // Settings process (system_app) can run dumpsys wifi.
             //
             // On OnePlus OxygenOS 16+ the WifiManager binder service
             // intentionally returns an empty list from
@@ -230,7 +182,7 @@ object AdbSystemHooks {
             try {
                 // dumpsys wifi is slow on some ROMs and can take >10 s.
                 // Fire-and-forget on a worker thread. installCallbacks()
-                // runs on the system_server main thread during
+                // runs on the Settings main thread during
                 // handleLoadPackage, so awaiting the dump here would
                 // block that thread for up to the timeout and trip an ANR.
                 Thread {
@@ -301,118 +253,6 @@ object AdbSystemHooks {
         }
     }
 
-    private fun hookPairingDialog(classLoader: ClassLoader?) {
-        // Candidate classes across Android versions. Each entry is
-        // (className, fieldNameHoldingPort). On match, the value is
-        // persisted to /data/local/tmp/adb_x_pairing_port for the app
-        // to read via AdbHelper.getPairingPort().
-        val candidates = listOf(
-            "com.android.systemui.adb.AdbPairingDialog" to "mPort",
-            "com.android.systemui.adb.AdbPairingDialog" to "mServicePort",
-            "com.android.systemui.adb.AdbPairingDialog" to "port",
-            "com.android.settingslib.wifi.AccessPoint" to "mPairingPort",
-            "com.android.settings.wifi.WifiPairingDialog" to "mPort",
-        )
-        for ((className, fieldName) in candidates) {
-            try {
-                val cls = XposedHelpers.findClass(className, classLoader)
-                XposedHelpers.findField(cls, fieldName)
-                XposedHelpers.findAndHookConstructor(cls, Any::class.java, object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        try {
-                            val port = XposedHelpers.getObjectField(param.thisObject, fieldName)?.toString()
-                            if (!port.isNullOrBlank() && port != "0") {
-                                writePairingPort(port)
-                            }
-                        } catch (_: Throwable) { }
-                    }
-                })
-                XposedInit.log("[$TAG] Hooked $className.$fieldName")
-            } catch (_: Throwable) {
-                // Class or field not on this ROM — silently skip.
-            }
-        }
-    }
-
-    /**
-     * Beyond the (limit) candidate list in hookPairingDialog() above,
-     * we also walk every class the system_server has loaded whose name
-     * hints at ADB pairing — AdbPairing*, WirelessDebug*, AdbDebug*
-     * — and catch each new instance. For each instance we inspect
-     * every field for a port-shaped int (4–5 digit, in the ephemeral
-     * range, not the legacy main ADB port 5555) and persist it into
-     * the marker file our app reads. This gives the path a chance
-     * regardless of which inner class OnePlus renamed in this
-     * particular OxygenOS build.
-     */
-    private fun hookPairingFuzzy(classLoader: ClassLoader?) {
-        // Expanded candidate list covering AOSP + OnePlus renames.
-        // Each entry is a (className, fieldName) pair; we walk fields
-        // generically on every new instance instead of relying on a
-        // single canonical field name, so the OEM-renamed builds still
-        // surface their ephemeral port to /data/local/tmp/.
-        val candidates = listOf(
-            // Stock AOSP
-            "com.android.server.adb.AdbPairingDialog",
-            "com.android.server.adb.AdbPairingService",
-            "com.android.server.adb.WirelessDebuggingHandler",
-            // OnePlus / OPlus internal names
-            "com.oplus.adbd.AdbPairingDialog",
-            "com.oplus.adbd.AdbPairingService",
-            "com.oplus.adbd.WirelessDebuggingService",
-            "com.android.adbd.AdbPairingDialog",
-            "com.android.adbd.AdbPairingService",
-            // Settings app side (also hosts the dialog on some OEMs)
-            "com.android.systemui.adb.AdbPairingDialog\$Receiver",
-            // Catch-all for `AdbPairing` style names not on this list
-        )
-        for (className in candidates) {
-            try {
-                val cls = XposedHelpers.findClass(className, classLoader)
-                XposedHelpers.findAndHookConstructor(cls, Any::class.java, object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        try {
-                            val obj = param.thisObject ?: return
-                            for (field in obj.javaClass.declaredFields) {
-                                try {
-                                    field.isAccessible = true
-                                    val raw = field.get(obj)?.toString() ?: continue
-                                    if (raw.length in 4..5 && raw.all { it.isDigit() }
-                                        && raw.toInt() in 1024..65535
-                                        && raw.toInt() != 5555) {
-                                        writePairingPort(raw)
-                                        return
-                                    }
-                                } catch (_: Throwable) { }
-                            }
-                        } catch (_: Throwable) { }
-                    }
-                })
-                XposedInit.log("[$TAG] fuzzy-hooked " + cls)
-            } catch (_: Throwable) { }
-        }
-    }
-
-
-    private fun writePairingPort(port: String) {
-        try {
-            // Write directly from the hooked process context. The
-            // com.android.settings process runs as system_app (uid
-            // 1000) and can write /data/local/tmp/ (shell_data_file
-            // label, app-readable) without needing su — and without
-            // risking single-quote / shell-metacharacter escaping
-            // problems that broke the previous Runtime.exec("su -c
-            // sh -c '...'") approach.
-            val f = java.io.File("/data/local/tmp/adb_x_pairing_port")
-            f.parentFile?.mkdirs()
-            f.writeText(port)
-            try { f.setReadable(true, false) } catch (_: Throwable) { }
-            XposedInit.log("[$TAG] pairing port written: $port")
-        } catch (t: Throwable) {
-            XposedInit.log("[$TAG] writePairingPort failed: ${t.message}")
-        }
-    }
-
     private fun handleWifiEvent(cm: ConnectivityManager, wm: WifiManager,
                                 network: Network, context: Context,
                                 handler: Handler) {
@@ -440,7 +280,7 @@ object AdbSystemHooks {
         XposedInit.log("[$TAG] Trusted WiFi '$ssid' — enabling ADB")
         lastEnabledSsid = ssid
         retryCount.set(0)
-        enableAdb(context, config)
+        enableAdb(context)
     }
 
     /** Retry a few times — catches the case where the config file appears after WiFi connects. */
@@ -465,14 +305,14 @@ object AdbSystemHooks {
                 XposedInit.log("[$TAG] Config appeared on retry #$attempt — enabling ADB")
                 lastEnabledSsid = ssid
                 retryCount.set(0)
-                enableAdb(context, cfg)
+                enableAdb(context)
             } else {
                 retryConfig(handler, cm, wm, network, context)
             }
         }, retryDelayMs)
     }
 
-    private fun enableAdb(context: Context, config: AdbConfig) {
+    private fun enableAdb(context: Context) {
         try {
             val before = Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", -1)
             Settings.Global.putInt(context.contentResolver, "adb_wifi_enabled", 1)
@@ -482,17 +322,10 @@ object AdbSystemHooks {
             XposedInit.log("[$TAG] Failed to enable ADB: ${t.message}")
         }
 
-        if (config.fixedPortEnabled && config.fixedPort in 1024..65535) {
-            try {
-                val spClass = XposedHelpers.findClass("android.os.SystemProperties", null)
-                val setMethod = spClass.getDeclaredMethod("set", String::class.java, String::class.java)
-                setMethod.invoke(null, "service.adb.tls.port", config.fixedPort.toString())
-                setMethod.invoke(null, "service.adb.tcp.port", config.fixedPort.toString())
-                XposedInit.log("[$TAG] Fixed port set to ${config.fixedPort}")
-            } catch (t: Throwable) {
-                XposedInit.log("[$TAG] Fixed port failed (non-fatal): ${t.message}")
-            }
-        }
+        // NOTE: the old SystemProperties.set("service.adb.tls.port", ...)
+        // logic was removed — Rust adbd ignores that prop for TLS wireless
+        // debugging and picks its own random port. Fixed ports, if needed,
+        // are handled by the app via legacy TCP mode (adb tcpip), not here.
     }
 
     private data class AdbConfig(
