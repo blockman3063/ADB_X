@@ -97,12 +97,17 @@ jobs:
           BADGING=$($AAPT dump badging app/build/outputs/apk/release/app-release.apk | head -1)
           VERCODE=$(echo "$BADGING" | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
           VERNAME=$(echo "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")
-          # VersionCode must change every release — immutable-release tag
-          # protection blocks reusing a tag. We append the CI run number to
-          # the manifest versionCode so the LSPosed tag stays unique.
-          VERCODE="${VERCODE}${GITHUB_RUN_NUMBER}"
+          # Do NOT append GITHUB_RUN_NUMBER to versionCode. LSPosed Manager
+          # compares the APK's manifest versionCode against the versionCode
+          # in the repo's module.prop. If they differ (e.g. APK=6 but
+          # module.prop=6125), the manager reports "update available"
+          # forever, even after installing the latest build. The versionCode
+          # here must stay identical to the one baked into the APK.
+          # Tag uniqueness is handled separately via the run number in
+          # TAG_NAME below, not by corrupting versionCode.
           echo "versionCode=$VERCODE" >> "$GITHUB_OUTPUT"
           echo "versionName=$VERNAME" >> "$GITHUB_OUTPUT"
+          echo "runNumber=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: Drop any existing release for this tag
         env:
@@ -216,12 +221,14 @@ jobs:
           GH_TOKEN: ${{ secrets.XPOSED_TOKEN }}
           VC: ${{ steps.apk.outputs.versionCode }}
           VN: ${{ steps.apk.outputs.versionName }}
+          RUN: ${{ steps.apk.outputs.runNumber }}
         run: |
           # Tag must match LSPosed repo indexer regex /^\d+-.+$/ — leading
-          # digits, then a dash, then anything. versionCode is a pure int;
-          # versionName may contain dots. This avoids the immutable-release
-          # tag-reuse block and keeps modules.lsposed.org indexing the build.
-          TAG_NAME="$VC-$VN"
+          # digits, then a dash, then anything. versionCode (a pure int) is
+          # the leading part so modules.lsposed.org still indexes the build;
+          # the trailing -r<run> guarantees uniqueness across CI runs without
+          # touching the APK's versionCode (which would break update checks).
+          TAG_NAME="$VC-$VN-r$RUN"
 
           # Build the release notes body, then POST as JSON via a python
           # heredoc so we don't fight with bash/awk string escaping for
